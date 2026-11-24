@@ -1,13 +1,13 @@
 import { useEffect, useEffectEvent, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import { VideoView } from 'expo-video';
-import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View, type GestureResponderEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { usePurePlayer, type PlaybackOptions, type PlayerControls, type PlayerEvent, type PlayerSource } from './usePurePlayer';
 import { usePlaybackOrientation, type PlaybackOrientation } from './usePlaybackOrientation';
 import { usePlaybackBrightness } from './usePlaybackBrightness';
 import { useSeekGestures } from './useSeekGestures';
-import { TrackSettings } from './TrackSettings';
+import { TrackSettings, type TrackSettingsMode } from './TrackSettings';
 import { colors } from '../theme';
 
 export function PlayerButton({
@@ -53,14 +53,19 @@ const icons = {
   brightness: 'M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5',
   previous: 'M5 5v14M19 5 8 12l11 7z',
   next: 'M19 5v14M5 5l11 7-11 7z',
-  fill: 'M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5',
-  fit: 'M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5',
-  tracks: 'M3 5h18v12h-8l-4 3v-3H3zM6 9h5m2 0h5M6 13h8m2 0h2',
+  subtitles: 'M3 5h18v12h-8l-4 3v-3H3zM6 9h5m2 0h5M6 13h8m2 0h2',
+  audio: 'M9 18V5l11-2v13M9 9l11-2M9 18a3 2 0 1 1-3-2 3 2 0 0 1 3 2Zm11-2a3 2 0 1 1-3-2 3 2 0 0 1 3 2Z',
+  quality: 'M3 4h18v13H3zM8 21h8m-4-4v4M7 13v-2m5 2V9m5 4V7',
 };
 
 const scrubLabelWidth = 72;
-const exitWindowMs = 2000;
 const tvControlsIdleMs = 4000;
+
+function pinchDistance({ nativeEvent: { touches } }: GestureResponderEvent) {
+  if (touches.length !== 2) return null;
+  const [first, second] = touches;
+  return Math.hypot(first.pageX - second.pageX, first.pageY - second.pageY);
+}
 
 function IconButton({ icon, label, onPress, disabled, primary, compact, step }: {
   icon: keyof typeof icons;
@@ -205,27 +210,23 @@ function PlayerSession({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [dismissedAction, setDismissedAction] = useState<string | null>(null);
   const [tvActivity, setTvActivity] = useState(0);
-  const [exitHintVisible, setExitHintVisible] = useState(false);
-  const exitDeadline = useRef(0);
-  const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [trackSettingsOpen, setTrackSettingsOpen] = useState(false);
+  const [trackSettings, setTrackSettings] = useState<TrackSettingsMode | null>(null);
   const [timelineWidth, setTimelineWidth] = useState(0);
   const [scrubPosition, setScrubPosition] = useState<number | null>(null);
   const scrubStart = useRef<{ pageX: number; localX: number } | null>(null);
   const surfaceWidth = useRef(0);
+  const pinchStart = useRef<number | null>(null);
   const [fillScreen, setFillScreen] = useState(false);
   const brightness = usePlaybackBrightness(controls && !Platform.isTV);
   const { duration, videoSize } = player;
   usePlaybackOrientation(autoRotate, videoSize, initialOrientation, lockedOrientation);
   const seekDisabled = duration === null || player.state === 'error';
   const showControls = controls && controlsVisible;
-  const gestures = useSeekGestures(player.position, duration, player.seekTo, controls && !seekDisabled && !trackSettingsOpen, showControls);
+  const gestures = useSeekGestures(player.position, duration, player.seekTo, controls && !seekDisabled && !trackSettings, showControls);
   const tvSeekPreview = Platform.isTV ? gestures.preview : null;
   const timelinePreview = scrubPosition ?? tvSeekPreview;
   const displayedPosition = timelinePreview ?? gestures.preview ?? player.position;
   const progress = duration ? Math.min(100, Math.max(0, displayedPosition / duration * 100)) : 0;
-  const hasTrackSettings = player.audioTracks.length > 1 || player.subtitleTracks.length > 0 ||
-    player.videoQualities.length > 1 || player.videoQuality !== 'auto';
 
   const loading = player.state === 'loading' || (player.state === 'idle' && !player.ended);
   const actionPosition = player.ended ? duration ?? player.position : player.position;
@@ -238,7 +239,7 @@ function PlayerSession({
   });
   const activeActionId = activeAction?.id;
   const showAction = controls && activeAction !== undefined && activeActionId !== dismissedAction &&
-    !loading && !player.error && !trackSettingsOpen && timelinePreview === null && gestures.preview === null;
+    !loading && !player.error && !trackSettings && timelinePreview === null && gestures.preview === null;
 
   useEffect(() => {
     setDismissedAction((id) => id === activeActionId ? id : null);
@@ -258,7 +259,7 @@ function PlayerSession({
   }, [timedActions]);
 
   const canAutoHide = Platform.isTV && showControls && player.isPlaying && !player.ended &&
-    !loading && !player.error && !trackSettingsOpen && gestures.preview === null;
+    !loading && !player.error && !trackSettings && gestures.preview === null;
 
   useTVEventHandler(({ eventType }) => {
     if (canAutoHide && eventType !== 'focus' && eventType !== 'blur') {
@@ -272,44 +273,25 @@ function PlayerSession({
     return () => clearTimeout(timer);
   }, [canAutoHide, tvActivity]);
 
-  function clearExitHint() {
-    exitDeadline.current = 0;
-    if (exitTimer.current !== null) clearTimeout(exitTimer.current);
-    exitTimer.current = null;
-    setExitHintVisible(false);
-  }
-
   function toggleControls() {
-    clearExitHint();
     setControlsVisible((visible) => !visible);
   }
 
   function hideControls() {
-    clearExitHint();
     gestures.cancelSeek();
     scrubStart.current = null;
     setScrubPosition(null);
-    setTrackSettingsOpen(false);
+    setTrackSettings(null);
     setControlsVisible(false);
     if (activeAction) setDismissedAction(activeAction.id);
   }
 
   const handleHardwareBack = useEffectEvent(() => {
-    if (showControls || trackSettingsOpen || showAction) {
+    if (showControls || trackSettings || showAction || gestures.preview !== null) {
       hideControls();
       return true;
     }
 
-    gestures.cancelSeek();
-    if (Date.now() >= exitDeadline.current) {
-      clearExitHint();
-      exitDeadline.current = Date.now() + exitWindowMs;
-      setExitHintVisible(true);
-      exitTimer.current = setTimeout(clearExitHint, exitWindowMs);
-      return true;
-    }
-
-    clearExitHint();
     const snapshot = player.getPlaybackSnapshot();
     if (snapshot.duration !== null) onEvent?.({ type: 'checkpoint', sourceId: source.id, reason: 'exit', ...snapshot });
     const exit = onExit ?? (backRoute !== undefined ? () => navigate(backRoute) : onBack ?? onClose);
@@ -320,11 +302,22 @@ function PlayerSession({
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => handleHardwareBack());
-    return () => {
-      subscription.remove();
-      if (exitTimer.current !== null) clearTimeout(exitTimer.current);
-    };
+    return () => subscription.remove();
   }, []);
+
+  function startPinch(event: GestureResponderEvent) {
+    gestures.cancelSeek();
+    pinchStart.current = pinchDistance(event);
+  }
+
+  function movePinch(event: GestureResponderEvent) {
+    const distance = pinchDistance(event);
+    const start = pinchStart.current;
+    if (distance === null || start === null || start <= 0) return;
+    const threshold = Math.max(12, start * 0.15);
+    if (distance >= start + threshold) setFillScreen(true);
+    else if (distance <= start - threshold) setFillScreen(false);
+  }
 
   function scrubTime(x: number) {
     if (seekDisabled || duration === null || timelineWidth <= 0) return null;
@@ -361,12 +354,25 @@ function PlayerSession({
         onFirstFrameRender={player.firstFrameRendered}
       />
       {controls && (
-        <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+        <View
+          pointerEvents="box-none"
+          style={StyleSheet.absoluteFill}
+          onStartShouldSetResponderCapture={(event) => !Platform.isTV && pinchDistance(event) !== null}
+          onMoveShouldSetResponderCapture={(event) => !Platform.isTV && pinchDistance(event) !== null}
+          onResponderGrant={startPinch}
+          onResponderMove={movePinch}
+          onResponderEnd={(event) => { if (pinchDistance(event) === null) pinchStart.current = null; }}
+          onResponderTerminate={() => { pinchStart.current = null; }}
+        >
           {!Platform.isTV && (
             <Pressable
               style={StyleSheet.absoluteFill}
               accessibilityRole="button"
               accessibilityLabel={showControls ? 'Hide playback controls' : 'Show playback controls'}
+              accessibilityActions={[{ name: 'toggleZoom', label: fillScreen ? 'Fit video to screen' : 'Zoom video to fill' }]}
+              onAccessibilityAction={({ nativeEvent }) => {
+                if (nativeEvent.actionName === 'toggleZoom') setFillScreen((fill) => !fill);
+              }}
               onPress={({ nativeEvent }) => {
                 const fraction = surfaceWidth.current > 0 ? nativeEvent.locationX / surfaceWidth.current : 0.5;
                 gestures.tapVideo(fraction < 0.4 ? -1 : fraction > 0.6 ? 1 : null, toggleControls);
@@ -406,15 +412,15 @@ function PlayerSession({
                 <View pointerEvents="box-none" style={styles.tools}>
                   {onPrev && <IconButton icon="previous" label="Previous video" compact onPress={onPrev} />}
                   {onNext && <IconButton icon="next" label="Next video" compact onPress={onNext} />}
-                  {hasTrackSettings && (
-                    <IconButton icon="tracks" label="Playback settings" compact onPress={() => setTrackSettingsOpen(true)} />
+                  {player.subtitleTracks.length > 0 && (
+                    <IconButton icon="subtitles" label="Subtitles" compact onPress={() => setTrackSettings('subtitles')} />
                   )}
-                  {!Platform.isTV && <IconButton
-                    icon={fillScreen ? 'fit' : 'fill'}
-                    label={fillScreen ? 'Fit video to screen' : 'Zoom to fill screen'}
-                    compact
-                    onPress={() => setFillScreen((fill) => !fill)}
-                  />}
+                  {player.audioTracks.length > 1 && (
+                    <IconButton icon="audio" label="Audio tracks" compact onPress={() => setTrackSettings('audio')} />
+                  )}
+                  {(player.videoQualities.length > 1 || player.videoQuality !== 'auto') && (
+                    <IconButton icon="quality" label="Video quality" compact onPress={() => setTrackSettings('quality')} />
+                  )}
                 </View>
               </View>
               <View pointerEvents="box-none" style={styles.center}>
@@ -523,8 +529,9 @@ function PlayerSession({
           )}
         </View>
       )}
-      {controls && trackSettingsOpen && (
+      {controls && trackSettings && (
         <TrackSettings
+          mode={trackSettings}
           audioTracks={player.audioTracks}
           subtitleTracks={player.subtitleTracks}
           audioTrack={player.audioTrack}
@@ -535,14 +542,8 @@ function PlayerSession({
           videoQuality={player.videoQuality}
           videoSize={player.videoSize}
           selectVideoQuality={player.selectVideoQuality}
-          onClose={() => setTrackSettingsOpen(false)}
-          onBack={hideControls}
+          onClose={() => setTrackSettings(null)}
         />
-      )}
-      {exitHintVisible && (
-        <View pointerEvents="none" style={[styles.exitHint, { bottom: insets.bottom + edge }]}>
-          <Text accessibilityLiveRegion="polite" style={styles.label}>Press Back again to exit</Text>
-        </View>
       )}
     </View>
   );
@@ -568,10 +569,6 @@ const styles = StyleSheet.create({
     paddingVertical: 5, borderRadius: 6, backgroundColor: '#0A1220E8',
   },
   scrubTime: { color: colors.text, fontSize: 14, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  exitHint: {
-    position: 'absolute', alignSelf: 'center', backgroundColor: '#0A1220E8',
-    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 18,
-  },
   seekFeedback: { position: 'absolute', top: 0, bottom: 0, width: '50%', justifyContent: 'center', alignItems: 'center', gap: 4 },
   seekFeedbackLeft: { left: 0 },
   seekFeedbackRight: { right: 0 },

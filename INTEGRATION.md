@@ -120,7 +120,7 @@ export function PlaybackScreen({ source, goBack }: Props) {
 | `skipIntro` | `{ start: number; end: number }` | Seconds. Shows Skip Intro during `[start, end)` and seeks to `end`. Requires `0 <= start < end <= duration` and a known duration. |
 | `timedActions` | `readonly TimedPlayerAction[]` | Custom playback buttons, such as Skip Recap, Skip Intro, or Next Episode. Each has a label, timing, and a callback that receives `PlayerControls`. |
 
-On phones and TV, Back hides visible controls first. With controls hidden, Back shows a confirmation hint. Press Back again within two seconds to exit. Order: `onExit`, then `navigate(backRoute)`, then `onBack`, then `onClose`, then normal host/Android Back if no callback applies.
+On phones and TV, Back closes an open track picker without hiding playback controls. Otherwise, Back hides visible controls or dismisses a visible timed action. When playback controls and pickers are already hidden, one Back press exits with no confirmation prompt. Exit order: `onExit`, then `navigate(backRoute)`, then `onBack`, then `onClose`, then normal host/Android Back if no callback applies.
 
 ### Callback reference
 
