@@ -19,6 +19,7 @@
     "plugins": [
       ["@react-native-tvos/config-tv", { "androidTVBanner": ".\\assets\\tv-banner.png" }],
       "expo-video",
+      ["react-native-google-cast", { "androidPlayServicesCastFrameworkVersion": "22.2.0" }],
       "./plugins/withHttpPlayback",
       ["./plugins/withCmakeVersion", { "version": "4.1.2" }]
     ]

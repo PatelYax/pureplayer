@@ -1,3 +1,8 @@
+export const fonts = {
+  regular: 'SpaceGrotesk_400Regular',
+  bold: 'SpaceGrotesk_700Bold',
+} as const;
+
 export const colors = {
   background: '#070B13',
   surface: '#101A2B',

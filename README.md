@@ -4,18 +4,23 @@ PurePlayer is a standalone player for Android phones, tablets, Android TV, and G
 
 ## Run on Windows
 
-Install Android Studio and its Android SDK, then start an emulator or connect a device with USB debugging enabled. From the project root in PowerShell:
+Install Android Studio and its Android SDK. From the project root, run `npm.cmd ci` once to install dependencies.
+
+### Run directly on an Android emulator
+
+Start your emulator in **Android Studio > Device Manager** and wait for it to boot. Then run these commands from the project root in PowerShell:
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 $env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:Path"
 
-npm.cmd ci
-npm.cmd run android
+npm run android
 ```
 
-Adjust the paths if Android Studio or the SDK is installed elsewhere. These environment variables apply to the current terminal. `npm.cmd run android` builds and installs the development app and starts Metro. If the app is already installed and only JavaScript changed, use `npm.cmd start`. Run `npm.cmd run typecheck` to check the TypeScript code.
+Adjust the paths if Android Studio or the SDK is installed elsewhere. These environment variables apply to the current terminal. `npm run android` builds and installs the development app and starts Metro. If PowerShell blocks `npm.ps1`, use `npm.cmd run android` instead. To choose a target when multiple devices are connected, run `npm.cmd run android -- --device`. The same commands work with a physical Android device connected with USB debugging enabled.
+
+If the app is already installed and only JavaScript changed, use `npm.cmd start`. Run `npm.cmd run typecheck` to check the TypeScript code.
 
 ### Android TV / Google TV
 
@@ -64,6 +69,8 @@ The bundle is at `android\app\build\outputs\bundle\release\app-release.aab`. App
 
 ## Player controls
 
+On phones and tablets, the playback buttons and timeline also hide after four seconds without input while the video is playing. Tap the video to show them again.
+
 - **Play a URL:** Under **Stream a video**, paste a direct media URL, such as an MP4, HLS (`.m3u8`), or DASH (`.mpd`) link. A webpage URL is not a video URL. Prefer HTTPS. Plain HTTP is unencrypted; use it only for trusted sources such as a local media server. The project enables Android cleartext traffic app-wide through its Expo config plugin. Changing that setting requires regenerating and rebuilding the native app, not just restarting Metro.
 - **Play a local file:** Select **Open downloaded video** and choose a file from Android's picker. PurePlayer opens files you already have; it does not download videos.
 - **Fullscreen and orientation:** The standalone app hides Android's status and navigation bars during phone/tablet playback. It opens in landscape and follows the video's dimensions once known because the app enables `autoRotate`. Android TV and Google TV never request rotation. On phones and tablets, spread two fingers to fill the screen (which can crop the edges), or pinch inward to fit the whole frame. TV always uses Fit.
@@ -71,12 +78,25 @@ The bundle is at `android\app\build\outputs\bundle\release\app-release.aab`. App
 - **TV remote:** The controls and timeline hide after four seconds without remote input during playback. Auto-hide waits while paused, buffering, previewing a seek, or using audio and subtitle settings. Press OK to show the controls again. Hold Left or Right to gradually speed up the seek preview. The timeline and target timestamp update alongside the same chevrons and signed offset used by mobile touch seeking, even when controls are hidden. Playback jumps only on release. The timeline is display-only. Short presses navigate visible controls; when controls are hidden, Left and Right queue 10-second steps instead. Brightness gestures are disabled on TV.
 - **Audio and subtitles:** The music-note icon appears for multiple audio tracks, and the subtitle icon appears when subtitles are available. Choosing a track or turning subtitles off closes its picker. **Subtitle style** opens Android's device-wide accessibility caption settings, where available.
 - **Video quality:** Use the video quality icon to choose **Auto** or a resolution offered by the stream and supported by your device. The icon appears when multiple supported resolutions are available. A successful selection closes the picker and may briefly buffer without changing the stream URL. Manual quality requires a rebuilt Android app; installing dependencies applies the native patch automatically.
+- **Google Cast:** On supported Android phones, Cast is the far-right toolbar button for network streams. Use **Cast controls** to control the receiver after connecting. Downloaded files remain local. Cast requires a rebuilt Android app.
 - **Navigation:** Tap outside a picker or press Back to close it without hiding playback controls. The on-screen back arrow hides the controls. Android Back hides visible controls first; when they are already hidden, one Back press exits playback with no confirmation prompt. The standalone app returns to its home screen.
 - **Loading and errors:** A centered blue spinner shows during loading or buffering without a dimming background. Playback failures show a message, and finishing a video exposes Replay.
 
 Dolby Vision, HDR, and Atmos output are not guaranteed: they depend on the stream or file, Android device, and connected display or audio equipment. Verify the actual output on the target hardware.
 
+### Demo stream
+
+Paste this Apple HLS sample into **Stream a video** to try playback and the video quality picker:
+
+```text
+https://devstreaming-cdn.apple.com/videos/streaming/examples/adv_dv_atmos/main.m3u8
+```
+
+The quality picker only shows resolutions supported by your device.
+
 ## Embed PurePlayer
+
+Pass `title` and `subtitle` for the player header and `pauseMetadata` for the animated details card. It returns after 3.5 seconds of inactivity if you dismiss it and leave playback paused. To disable the standalone sample, remove `{...demoMetadata}` from the player call in [App.tsx](./src/App.tsx).
 
 See [INTEGRATION.md](./INTEGRATION.md) for the exact copy/paste file list, host build setup, usage examples, and full API reference.
 

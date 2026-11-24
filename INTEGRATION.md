@@ -13,10 +13,12 @@ src\
   theme.ts
   player\
     PurePlayer.tsx
+    PauseDetails.tsx
     TrackSettings.tsx
     usePurePlayer.ts
     usePlaybackOrientation.ts
     usePlaybackBrightness.ts
+    usePlaybackCast.ts
     useSeekGestures.ts
 ```
 
@@ -30,13 +32,15 @@ src\
 Run this from the **host project root** in PowerShell:
 
 ```powershell
-npx.cmd expo install expo-video expo-screen-orientation expo-brightness react-native-safe-area-context react-native-svg
+npx.cmd expo install expo-video expo-screen-orientation expo-brightness expo-font react-native-safe-area-context react-native-svg
+npm.cmd install @expo-google-fonts/space-grotesk react-native-google-cast@4.9.1
 ```
 
 PurePlayer was developed with Expo SDK 58. Use versions compatible with your host SDK; see PurePlayer's [package.json](./package.json) for the reference setup. The code uses React's `useEffectEvent`. The full UI imports `useTVEventHandler` from the React Native TV fork, so copying it unchanged requires the compatible TV fork. A standard React Native mobile-only host can use the playback hook by itself.
 
 - **Android TV / Google TV:** Use one SDK-compatible `react-native-tvos` version aliased as `react-native` in the host app. Add `@react-native-tvos/config-tv` to the host's dependencies and Expo plugins if they aren't set up yet. For one app that runs on both TV and mobile, enable TV configuration without setting `androidTVRequired: true`. Use your own TV launcher artwork.
 - **Expo config:** Merge the `expo-video` plugin into the host's existing `expo.plugins` if it's not already configured. Don't replace the host config. Allow orientation changes on the playback screen if you want PurePlayer's rotation options to work.
+- **Google Cast:** Merge `["react-native-google-cast", { "androidPlayServicesCastFrameworkVersion": "22.2.0" }]` into `expo.plugins` and rebuild. The Cast button is the last toolbar item for HTTP(S) sources on Android phones with compatible Google Play services. TVs and displays with a shorter side of 600 dp or more do not show it. The receiver fetches the stream itself: phone-only URLs, downloaded files, and unsupported codecs won't cast. Once connected, use **Cast controls**; PurePlayer's ref, checkpoints, and track options are for local playback, and receiver progress is not synced back on disconnect.
 - **Plain HTTP:** Prefer HTTPS. If cleartext playback is required, configure it in the host's Android network security policy, ideally for only the relevant domains. PurePlayer's optional [withHttpPlayback.js](./plugins/withHttpPlayback.js) enables cleartext app-wide and is not required for HTTPS or local video.
 
 For an Expo host that generates native files through prebuild, regenerate and run a development build. Set `EXPO_TV` for a TV-enabled host:
@@ -119,8 +123,34 @@ export function PlaybackScreen({ source, goBack }: Props) {
 | `onNext` | `() => void` | Shows a Next button. The host chooses the next video. |
 | `skipIntro` | `{ start: number; end: number }` | Seconds. Shows Skip Intro during `[start, end)` and seeks to `end`. Requires `0 <= start < end <= duration` and a known duration. |
 | `timedActions` | `readonly TimedPlayerAction[]` | Custom playback buttons, such as Skip Recap, Skip Intro, or Next Episode. Each has a label, timing, and a callback that receives `PlayerControls`. |
+| `title`, `subtitle` | `string` | Optional heading and secondary line beside the back arrow while playback controls are visible. |
+| `pauseMetadata` | `PauseMetadata` | Optional `name`, `image`, `detailLine`, and `description` for the animated paused screen. Omit the prop to disable it. |
 
 On phones and TV, Back closes an open track picker without hiding playback controls. Otherwise, Back hides visible controls or dismisses a visible timed action. When playback controls and pickers are already hidden, one Back press exits with no confirmation prompt. Exit order: `onExit`, then `navigate(backRoute)`, then `onBack`, then `onClose`, then normal host/Android Back if no callback applies.
+
+### Player title, pause details, and font
+
+The backdrop is darkest behind the artwork and text. It fades left to right in landscape and bottom to top in portrait, leaving the rest of the paused frame visible.
+
+Pass data from your app, such as TMDB metadata. PurePlayer does not call TMDB itself. `PauseMetadata` is exported from `PurePlayer.tsx`. `image` accepts a React Native image source, such as `{ uri: artworkUrl }` or a bundled `require(...)`. Each field is optional and animated separately.
+
+```tsx
+<PurePlayer
+  source={source}
+  title={movieTitle}
+  subtitle={yearOrEpisode}
+  pauseMetadata={{
+    name: movieTitle,
+    image: artworkUrl ? { uri: artworkUrl } : undefined,
+    detailLine: ratingRuntimeAndGenres,
+    description: overview,
+  }}
+/>
+```
+
+The details appear after 3.5 seconds of inactivity while paused, including when the player opens with `autoPlay={false}` before the first Play press. They do not appear during buffering if playback is requested. Tap the screen or press a TV D-pad button or Back to return to the paused controls without resuming. If you leave the player paused, the details return after another 3.5 seconds of inactivity. In the standalone app, edit `demoMetadata` in [App.tsx](./src/App.tsx) or remove `{...demoMetadata}` from the `<PurePlayer>` call to remove all sample text and artwork.
+
+Load `SpaceGrotesk_400Regular` and `SpaceGrotesk_700Bold` with `useFonts` from `@expo-google-fonts/space-grotesk` before rendering the player, as shown in [App.tsx](./src/App.tsx). To use your host font instead, map `fonts.regular` and `fonts.bold` in the copied [theme.ts](./src/theme.ts) to your registered font names.
 
 ### Callback reference
 
@@ -258,6 +288,7 @@ For component calls, use `playerRef.current?.method(...)` after mount rather tha
 | `engine` | Expo Video `VideoPlayer`; pass it to `VideoView.player`. |
 | `state` | `'idle' \| 'loading' \| 'ready' \| 'error'` |
 | `isPlaying`, `ended` | Booleans for active playback and end of video. |
+| `playRequested` | Whether autoplay or a play/replay command has requested playback and has not been canceled by Pause. Can be `true` while the player is still buffering. |
 | `position`, `duration` | Position in seconds; duration is in seconds or `null` if unknown. |
 | `videoSize` | `{ width: number; height: number }` in pixels, or `null`. |
 | `videoQualities`, `videoQuality` | Available supported heights (`number[]`, highest first) and requested preference (`VideoQuality`, exported from `usePurePlayer.ts`: `'auto' \| number`). Use `videoSize` for the active dimensions. |

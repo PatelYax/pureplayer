@@ -1,14 +1,19 @@
 import { useEffect, useEffectEvent, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import { VideoView } from 'expo-video';
-import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View, type GestureResponderEvent } from 'react-native';
+import { CastButton } from 'react-native-google-cast';
+import { ActivityIndicator, BackHandler, Dimensions, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View, type GestureResponderEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { usePurePlayer, type PlaybackOptions, type PlayerControls, type PlayerEvent, type PlayerSource } from './usePurePlayer';
 import { usePlaybackOrientation, type PlaybackOrientation } from './usePlaybackOrientation';
 import { usePlaybackBrightness } from './usePlaybackBrightness';
+import { usePlaybackCast } from './usePlaybackCast';
 import { useSeekGestures } from './useSeekGestures';
 import { TrackSettings, type TrackSettingsMode } from './TrackSettings';
-import { colors } from '../theme';
+import { PauseDetails, type PauseMetadata } from './PauseDetails';
+import { colors, fonts } from '../theme';
+
+export type { PauseMetadata } from './PauseDetails';
 
 export function PlayerButton({
   label, onPress, disabled = false, preferredFocus = false, secondary = false,
@@ -59,7 +64,8 @@ const icons = {
 };
 
 const scrubLabelWidth = 72;
-const tvControlsIdleMs = 4000;
+const controlsIdleMs = 4000;
+const pauseDetailsDelayMs = 3500;
 
 function pinchDistance({ nativeEvent: { touches } }: GestureResponderEvent) {
   if (touches.length !== 2) return null;
@@ -184,6 +190,9 @@ export type PurePlayerProps = BackNavigation & PlaybackOptions & {
   onPrev?: () => void;
   skipIntro?: { start: number; end: number };
   timedActions?: readonly TimedPlayerAction[];
+  title?: string;
+  subtitle?: string;
+  pauseMetadata?: PauseMetadata;
 };
 
 export function PurePlayer({
@@ -195,9 +204,15 @@ export function PurePlayer({
 function PlayerSession({
   source, onEvent, controls = true, autoRotate = false, initialOrientation, lockedOrientation,
   onExit, onBack, onClose, backRoute, navigate, onNext, onPrev, skipIntro, timedActions,
-  ref, initialPosition, autoPlay,
+  ref, initialPosition, autoPlay, title, subtitle, pauseMetadata,
 }: PurePlayerProps) {
   const player = usePurePlayer(source, onEvent, { initialPosition, autoPlay });
+  const screen = Dimensions.get('screen');
+  const cast = usePlaybackCast(
+    controls && Platform.OS === 'android' && !Platform.isTV && Math.min(screen.width, screen.height) < 600 &&
+      /^https?:\/\//i.test(source.uri),
+    source, () => player.getPlaybackSnapshot().position, player.pause, title, subtitle,
+  );
   const playerControls: PlayerControls = {
     play: player.play, pause: player.pause, replay: player.replay, seekTo: player.seekTo, seekBy: player.seekBy,
     setVolume: player.setVolume, setMuted: player.setMuted, setPlaybackRate: player.setPlaybackRate,
@@ -208,21 +223,28 @@ function PlayerSession({
   const insets = useSafeAreaInsets();
   const edge = Platform.isTV ? 24 : 14;
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [pauseDetailsVisible, setPauseDetailsVisible] = useState(false);
+  const [pauseActivity, setPauseActivity] = useState(0);
   const [dismissedAction, setDismissedAction] = useState<string | null>(null);
-  const [tvActivity, setTvActivity] = useState(0);
+  const [controlsActivity, setControlsActivity] = useState(0);
   const [trackSettings, setTrackSettings] = useState<TrackSettingsMode | null>(null);
   const [timelineWidth, setTimelineWidth] = useState(0);
   const [scrubPosition, setScrubPosition] = useState<number | null>(null);
   const scrubStart = useRef<{ pageX: number; localX: number } | null>(null);
   const surfaceWidth = useRef(0);
+  const [landscape, setLandscape] = useState(false);
   const pinchStart = useRef<number | null>(null);
   const [fillScreen, setFillScreen] = useState(false);
   const brightness = usePlaybackBrightness(controls && !Platform.isTV);
   const { duration, videoSize } = player;
   usePlaybackOrientation(autoRotate, videoSize, initialOrientation, lockedOrientation);
   const seekDisabled = duration === null || player.state === 'error';
-  const showControls = controls && controlsVisible;
-  const gestures = useSeekGestures(player.position, duration, player.seekTo, controls && !seekDisabled && !trackSettings, showControls);
+  const hasPauseMetadata = !!(pauseMetadata?.name || pauseMetadata?.detailLine || pauseMetadata?.description || pauseMetadata?.image !== undefined);
+  const canShowPauseDetails = controls && hasPauseMetadata && !player.playRequested && !player.isPlaying &&
+    !player.ended && !player.error && !trackSettings && !cast.casting;
+  const showPauseDetails = canShowPauseDetails && pauseDetailsVisible;
+  const showControls = controls && controlsVisible && !showPauseDetails;
+  const gestures = useSeekGestures(player.position, duration, player.seekTo, controls && !seekDisabled && !trackSettings && !showPauseDetails && !cast.casting, showControls);
   const tvSeekPreview = Platform.isTV ? gestures.preview : null;
   const timelinePreview = scrubPosition ?? tvSeekPreview;
   const displayedPosition = timelinePreview ?? gestures.preview ?? player.position;
@@ -238,8 +260,8 @@ function PlayerSession({
     return start !== null && actionPosition >= start && (action.end === undefined || actionPosition < action.end);
   });
   const activeActionId = activeAction?.id;
-  const showAction = controls && activeAction !== undefined && activeActionId !== dismissedAction &&
-    !loading && !player.error && !trackSettings && timelinePreview === null && gestures.preview === null;
+  const showAction = controls && !cast.casting && activeAction !== undefined && activeActionId !== dismissedAction &&
+    !loading && !player.error && !trackSettings && !showPauseDetails && timelinePreview === null && gestures.preview === null;
 
   useEffect(() => {
     setDismissedAction((id) => id === activeActionId ? id : null);
@@ -258,20 +280,44 @@ function PlayerSession({
     }
   }, [timedActions]);
 
-  const canAutoHide = Platform.isTV && showControls && player.isPlaying && !player.ended &&
-    !loading && !player.error && !trackSettings && gestures.preview === null;
+  const canAutoHide = showControls && player.isPlaying && !player.ended &&
+    !loading && !player.error && !trackSettings && timelinePreview === null && gestures.preview === null;
+
+  function noteControlsActivity() {
+    if (canAutoHide) setControlsActivity((activity) => activity + 1);
+    if (canShowPauseDetails && !showPauseDetails) setPauseActivity((activity) => activity + 1);
+  }
 
   useTVEventHandler(({ eventType }) => {
-    if (canAutoHide && eventType !== 'focus' && eventType !== 'blur') {
-      setTvActivity((activity) => activity + 1);
+    if (!Platform.isTV || eventType === 'focus' || eventType === 'blur') return;
+    if (showPauseDetails) {
+      dismissPauseDetails();
+    } else {
+      noteControlsActivity();
     }
   });
 
   useEffect(() => {
     if (!canAutoHide) return;
-    const timer = setTimeout(() => setControlsVisible(false), tvControlsIdleMs);
+    const timer = setTimeout(() => setControlsVisible(false), controlsIdleMs);
     return () => clearTimeout(timer);
-  }, [canAutoHide, tvActivity]);
+  }, [canAutoHide, controlsActivity]);
+
+  useEffect(() => {
+    if (!canShowPauseDetails) {
+      setPauseDetailsVisible(false);
+      return;
+    }
+    if (timelinePreview !== null || gestures.preview !== null) return;
+    const timer = setTimeout(() => setPauseDetailsVisible(true), pauseDetailsDelayMs);
+    return () => clearTimeout(timer);
+  }, [canShowPauseDetails, pauseActivity, timelinePreview !== null, gestures.preview !== null]);
+
+  function dismissPauseDetails() {
+    setPauseDetailsVisible(false);
+    setControlsVisible(true);
+    setPauseActivity((activity) => activity + 1);
+  }
 
   function toggleControls() {
     setControlsVisible((visible) => !visible);
@@ -287,13 +333,19 @@ function PlayerSession({
   }
 
   const handleHardwareBack = useEffectEvent(() => {
+    if (showPauseDetails) {
+      dismissPauseDetails();
+      return true;
+    }
     if (showControls || trackSettings || showAction || gestures.preview !== null) {
       hideControls();
       return true;
     }
 
-    const snapshot = player.getPlaybackSnapshot();
-    if (snapshot.duration !== null) onEvent?.({ type: 'checkpoint', sourceId: source.id, reason: 'exit', ...snapshot });
+    if (!cast.casting) {
+      const snapshot = player.getPlaybackSnapshot();
+      if (snapshot.duration !== null) onEvent?.({ type: 'checkpoint', sourceId: source.id, reason: 'exit', ...snapshot });
+    }
     const exit = onExit ?? (backRoute !== undefined ? () => navigate(backRoute) : onBack ?? onClose);
     if (!exit) return false;
     exit();
@@ -344,7 +396,10 @@ function PlayerSession({
     ? skipIntro.end : null;
 
   return (
-    <View style={styles.player} onLayout={({ nativeEvent }) => { surfaceWidth.current = nativeEvent.layout.width; }}>
+    <View style={styles.player} onLayout={({ nativeEvent: { layout: { width, height } } }) => {
+      surfaceWidth.current = width;
+      setLandscape(width > height);
+    }}>
       <VideoView
         style={styles.video}
         player={player.engine}
@@ -357,6 +412,8 @@ function PlayerSession({
         <View
           pointerEvents="box-none"
           style={StyleSheet.absoluteFill}
+          onTouchStart={Platform.isTV ? undefined : noteControlsActivity}
+          onTouchEnd={Platform.isTV ? undefined : noteControlsActivity}
           onStartShouldSetResponderCapture={(event) => !Platform.isTV && pinchDistance(event) !== null}
           onMoveShouldSetResponderCapture={(event) => !Platform.isTV && pinchDistance(event) !== null}
           onResponderGrant={startPinch}
@@ -364,7 +421,7 @@ function PlayerSession({
           onResponderEnd={(event) => { if (pinchDistance(event) === null) pinchStart.current = null; }}
           onResponderTerminate={() => { pinchStart.current = null; }}
         >
-          {!Platform.isTV && (
+          {!Platform.isTV && !showPauseDetails && (
             <Pressable
               style={StyleSheet.absoluteFill}
               accessibilityRole="button"
@@ -379,7 +436,7 @@ function PlayerSession({
               }}
             />
           )}
-          {Platform.isTV && !showControls && (
+          {Platform.isTV && !showControls && !showPauseDetails && (
             <Pressable
               style={showAction ? styles.tvShowControlsTarget : StyleSheet.absoluteFill}
               accessibilityRole="button"
@@ -409,22 +466,31 @@ function PlayerSession({
                 top: insets.top + edge, left: insets.left + edge, right: insets.right + edge,
               }]}>
                 <IconButton icon="backArrow" label="Hide playback controls" compact onPress={hideControls} />
+                {(!!title || !!subtitle) && (
+                  <View style={styles.headerCopy}>
+                    {!!title && <Text accessibilityRole="header" numberOfLines={1} style={styles.headerTitle}>{title}</Text>}
+                    {!!subtitle && <Text numberOfLines={1} style={styles.headerSubtitle}>{subtitle}</Text>}
+                  </View>
+                )}
                 <View pointerEvents="box-none" style={styles.tools}>
                   {onPrev && <IconButton icon="previous" label="Previous video" compact onPress={onPrev} />}
                   {onNext && <IconButton icon="next" label="Next video" compact onPress={onNext} />}
-                  {player.subtitleTracks.length > 0 && (
+                  {!cast.casting && player.subtitleTracks.length > 0 && (
                     <IconButton icon="subtitles" label="Subtitles" compact onPress={() => setTrackSettings('subtitles')} />
                   )}
-                  {player.audioTracks.length > 1 && (
+                  {!cast.casting && player.audioTracks.length > 1 && (
                     <IconButton icon="audio" label="Audio tracks" compact onPress={() => setTrackSettings('audio')} />
                   )}
-                  {(player.videoQualities.length > 1 || player.videoQuality !== 'auto') && (
+                  {!cast.casting && (player.videoQualities.length > 1 || player.videoQuality !== 'auto') && (
                     <IconButton icon="quality" label="Video quality" compact onPress={() => setTrackSettings('quality')} />
                   )}
+                  {cast.available && <CastButton accessibilityLabel="Cast" tintColor={colors.text} style={styles.compactIcon} />}
                 </View>
               </View>
               <View pointerEvents="box-none" style={styles.center}>
-                {loading ? (
+                {cast.casting ? (
+                  <PlayerButton label="Cast controls" onPress={cast.openControls} />
+                ) : loading ? (
                   <ActivityIndicator size="large" color={colors.accent} accessibilityLabel="Loading video" />
                 ) : player.error ? (
                   <Text accessibilityRole="alert" style={styles.error}>{player.error}</Text>
@@ -441,12 +507,12 @@ function PlayerSession({
                   </View>
                 )}
               </View>
-              {!Platform.isTV && brightness.value !== null && !loading && !player.error && (
+              {!Platform.isTV && !cast.casting && brightness.value !== null && !loading && !player.error && (
                 <BrightnessSlider value={brightness.value} onChange={brightness.setLevel} left={insets.left + edge} />
               )}
             </View>
           )}
-          {(showControls || tvSeekPreview !== null) && (
+          {!cast.casting && (showControls || tvSeekPreview !== null) && (
               <View pointerEvents={Platform.isTV && !showControls ? 'none' : 'auto'} style={[styles.timeline, { bottom: insets.bottom + edge, left: insets.left + edge, right: insets.right + edge }]}>
                 {brightness.error && <Text accessibilityRole="alert" style={styles.error}>{brightness.error}</Text>}
                 {duration !== null && (
@@ -494,7 +560,7 @@ function PlayerSession({
                 </View>
               </View>
           )}
-          {(showAction || (showControls && !activeAction && introEnd !== null)) && (
+          {!cast.casting && (showAction || (showControls && !activeAction && introEnd !== null)) && (
             <View style={[styles.intro, {
               right: insets.right + edge, bottom: insets.bottom + edge + (showControls ? 62 : 0),
             }]}>
@@ -513,6 +579,8 @@ function PlayerSession({
               ) : null}
             </View>
           )}
+          {cast.error && <Text pointerEvents="none" accessibilityRole="alert"
+            style={[styles.castError, { bottom: insets.bottom + 76 }]}>{cast.error}</Text>}
           {gestures.feedback && (
             <View pointerEvents="none" style={[
               styles.seekFeedback,
@@ -529,7 +597,11 @@ function PlayerSession({
           )}
         </View>
       )}
-      {controls && trackSettings && (
+      {controls && hasPauseMetadata && pauseMetadata && (
+        <PauseDetails metadata={pauseMetadata} visible={showPauseDetails} onDismiss={dismissPauseDetails} landscape={landscape}
+          bottom={insets.bottom + edge * 2} left={insets.left + edge * 2} right={insets.right + edge * 2} />
+      )}
+      {controls && trackSettings && !cast.casting && (
         <TrackSettings
           mode={trackSettings}
           audioTracks={player.audioTracks}
@@ -550,10 +622,15 @@ function PlayerSession({
 }
 
 const styles = StyleSheet.create({
+  castError: { position: 'absolute', alignSelf: 'center', maxWidth: '85%', padding: 8,
+    backgroundColor: colors.surface, color: colors.error, fontFamily: fonts.regular, textAlign: 'center' },
   player: { flex: 1, backgroundColor: '#000' },
   video: { flex: 1, width: '100%' },
   overlay: { ...StyleSheet.absoluteFill },
   top: { position: 'absolute', zIndex: 1, flexDirection: 'row', alignItems: 'center' },
+  headerCopy: { flex: 1, minWidth: 0, paddingRight: 4 },
+  headerTitle: { color: colors.text, fontSize: Platform.isTV ? 24 : 18, fontFamily: fonts.bold },
+  headerSubtitle: { color: colors.muted, fontSize: Platform.isTV ? 16 : 13, fontFamily: fonts.regular },
   tools: { marginLeft: 'auto', flexDirection: 'row', gap: 6 },
   center: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   side: { position: 'absolute', top: '50%', marginTop: -56, alignItems: 'center', gap: 6, zIndex: 1 },
@@ -568,15 +645,15 @@ const styles = StyleSheet.create({
     position: 'absolute', bottom: '100%', width: scrubLabelWidth, alignItems: 'center',
     paddingVertical: 5, borderRadius: 6, backgroundColor: '#0A1220E8',
   },
-  scrubTime: { color: colors.text, fontSize: 14, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  scrubTime: { color: colors.text, fontSize: 14, fontFamily: fonts.bold, fontVariant: ['tabular-nums'] },
   seekFeedback: { position: 'absolute', top: 0, bottom: 0, width: '50%', justifyContent: 'center', alignItems: 'center', gap: 4 },
   seekFeedbackLeft: { left: 0 },
   seekFeedbackRight: { right: 0 },
-  seekFeedbackText: { color: colors.text, fontSize: 24, fontWeight: '700', textShadowColor: '#000', textShadowRadius: 6 },
+  seekFeedbackText: { color: colors.text, fontSize: 24, fontFamily: fonts.bold, textShadowColor: '#000', textShadowRadius: 6 },
   track: { height: 4, borderRadius: 2, backgroundColor: colors.border, overflow: 'hidden' },
   fill: { height: '100%', backgroundColor: colors.accent },
   times: { flexDirection: 'row', justifyContent: 'space-between' },
-  time: { color: colors.muted, fontVariant: ['tabular-nums'] },
+  time: { color: colors.muted, fontFamily: fonts.regular, fontVariant: ['tabular-nums'] },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Platform.isTV ? 26 : 12 },
   hideRow: { opacity: 0 },
   iconButton: {
@@ -585,7 +662,7 @@ const styles = StyleSheet.create({
   },
   compactIcon: { width: 44, height: 44, borderRadius: 22 },
   primaryIcon: { width: 68, height: 68, borderRadius: 34 },
-  stepLabel: { color: colors.text, fontSize: 12, fontWeight: '700', textShadowColor: '#000', textShadowRadius: 4 },
+  stepLabel: { color: colors.text, fontSize: 12, fontFamily: fonts.bold, textShadowColor: '#000', textShadowRadius: 4 },
   button: {
     minHeight: Platform.isTV ? 54 : 48,
     justifyContent: 'center',
@@ -600,6 +677,6 @@ const styles = StyleSheet.create({
   active: { backgroundColor: colors.pressed },
   focused: { backgroundColor: colors.selected, borderColor: colors.focus },
   disabled: { opacity: 0.45 },
-  label: { color: colors.text, fontSize: Platform.isTV ? 18 : 15, fontWeight: '700', textAlign: 'center' },
-  error: { color: colors.error, textAlign: 'center', maxWidth: '68%', alignSelf: 'center' },
+  label: { color: colors.text, fontSize: Platform.isTV ? 18 : 15, fontFamily: fonts.bold, textAlign: 'center' },
+  error: { color: colors.error, fontFamily: fonts.regular, textAlign: 'center', maxWidth: '68%', alignSelf: 'center' },
 });

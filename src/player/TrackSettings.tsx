@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { AudioTrack, SubtitleTrack } from 'expo-video';
-import { colors } from '../theme';
+import { colors, fonts } from '../theme';
 import type { PlayerControls, VideoQuality } from './usePurePlayer';
 
 export type TrackSettingsMode = 'audio' | 'subtitles' | 'quality';
@@ -135,13 +135,13 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 18, backgroundColor: '#0004' },
   panel: { width: '100%', maxWidth: 360, maxHeight: '85%', padding: 16, gap: 8, borderRadius: 20,
     backgroundColor: '#091322F0', borderWidth: 1, borderColor: '#A8C6F044' },
-  heading: { color: colors.text, fontSize: 20, fontWeight: '700' },
+  heading: { color: colors.text, fontSize: 20, fontFamily: fonts.bold },
   option: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 46, paddingHorizontal: 10,
     borderWidth: 2, borderColor: 'transparent', borderRadius: 10 },
   selected: { backgroundColor: colors.selected },
   pressed: { backgroundColor: colors.pressed },
   focus: { borderColor: colors.focus, backgroundColor: colors.selected },
-  label: { color: colors.text, fontSize: 16, flex: 1, textShadowColor: '#000', textShadowRadius: 4 },
-  check: { color: colors.focus, fontSize: 18, fontWeight: '700' },
-  error: { color: colors.error },
+  label: { color: colors.text, fontFamily: fonts.regular, fontSize: 16, flex: 1, textShadowColor: '#000', textShadowRadius: 4 },
+  check: { color: colors.focus, fontSize: 18, fontFamily: fonts.bold },
+  error: { color: colors.error, fontFamily: fonts.regular },
 });

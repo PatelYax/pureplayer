@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import { useVideoPlayer, type AudioTrack, type SubtitleTrack } from 'expo-video';
 
@@ -87,6 +87,8 @@ export function usePurePlayer(
   });
   const [state, setState] = useState<PlaybackState>('idle');
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playRequested, setPlayRequested] = useState(options?.autoPlay ?? true);
+  const playRequestedRef = useRef(playRequested);
   const [ended, setEnded] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState<number | null>(null);
@@ -106,6 +108,11 @@ export function usePurePlayer(
   });
   const { uri, format } = source;
   const getStartupOptions = useEffectEvent(() => options);
+
+  function requestPlayback(playing: boolean) {
+    playRequestedRef.current = playing;
+    setPlayRequested(playing);
+  }
 
   function getPlaybackSnapshot(): PlaybackSnapshot {
     return {
@@ -141,6 +148,7 @@ export function usePurePlayer(
     let receivedMetadata = false;
     let started = false;
     let qualityRequest = 0;
+    requestPlayback(autoPlay);
     setVideoQualities([]);
     setVideoQuality('auto');
 
@@ -172,7 +180,7 @@ export function usePurePlayer(
       } else if (shouldResume) {
         console.warn('PurePlayer could not resume: the saved position is outside the playable duration or the duration is unknown.');
       }
-      if (autoPlay) engine.play();
+      if (playRequestedRef.current) engine.play();
     }
 
     function updateSize(size?: VideoSize) {
@@ -303,6 +311,7 @@ export function usePurePlayer(
   }
 
   function replay() {
+    requestPlayback(true);
     setEnded(false);
     setPosition(0);
     engine.replay();
@@ -322,8 +331,15 @@ export function usePurePlayer(
       setVideoQuality(quality);
       onEvent?.({ type: 'videoQualityChanged', sourceId: source.id, quality });
     },
-    play: () => ended ? replay() : engine.play(),
+    play: () => {
+      if (ended) replay();
+      else {
+        requestPlayback(true);
+        engine.play();
+      }
+    },
     pause: () => {
+      requestPlayback(false);
       engine.pause();
       const snapshot = getPlaybackSnapshot();
       if (snapshot.duration !== null) onEvent?.({ type: 'checkpoint', sourceId: source.id, reason: 'pause', ...snapshot });
@@ -350,7 +366,7 @@ export function usePurePlayer(
   };
 
   return {
-    engine, state, isPlaying, ended, position, duration, videoSize, videoQualities, videoQuality, volume, muted, playbackRate, error,
+    engine, state, isPlaying, playRequested, ended, position, duration, videoSize, videoQualities, videoQuality, volume, muted, playbackRate, error,
     audioTracks, subtitleTracks, audioTrack, subtitleTrack,
     ...commands,
     firstFrameRendered() {
