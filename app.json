@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "PurePlayer",
+    "slug": "pureplayer",
+    "version": "0.1.0",
+    "platforms": [
+      "android"
+    ],
+    "orientation": "default",
+    "android": {
+      "package": "com.pureplayer.app"
+    },
+    "plugins": [
+      "@react-native-tvos/config-tv",
+      "expo-video",
+      "./plugins/withHttpPlayback",
+      ["./plugins/withCmakeVersion", { "version": "4.1.2" }]
+    ]
+  }
+}
