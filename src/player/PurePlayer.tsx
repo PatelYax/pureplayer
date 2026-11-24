@@ -1,7 +1,7 @@
-import { useEffect, useEffectEvent, useImperativeHandle, useRef, useState, type Ref } from 'react';
+import { useEffect, useEffectEvent, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import { VideoView } from 'expo-video';
 import { CastButton } from 'react-native-google-cast';
-import { ActivityIndicator, BackHandler, Dimensions, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View, type GestureResponderEvent } from 'react-native';
+import { ActivityIndicator, Animated, BackHandler, Dimensions, Easing, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View, type GestureResponderEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { usePurePlayer, type PlaybackOptions, type PlayerControls, type PlayerEvent, type PlayerSource } from './usePurePlayer';
@@ -38,8 +38,112 @@ export function PlayerButton({
         disabled && styles.disabled,
       ]}
     >
-      <Text style={styles.label}>{label}</Text>
+      <Text style={[styles.label, secondary ? styles.secondaryLabel : styles.primaryLabel]}>{label}</Text>
     </Pressable>
+  );
+}
+
+export function SkipTimedButton({
+  label,
+  preferredFocus = false,
+  onPress,
+  onDismiss,
+}: {
+  label: string;
+  preferredFocus?: boolean;
+  onPress: () => void;
+  onDismiss: () => void;
+}) {
+  const [fadeAnim] = useState(() => new Animated.Value(0));
+  const [progressAnim] = useState(() => new Animated.Value(0));
+  const dismissedRef = useRef(false);
+
+  const onDismissEvent = useEffectEvent(() => {
+    onDismiss();
+  });
+
+  useEffect(() => {
+    // 1. Smooth 250ms fade-in on mount
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 250,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+
+    // 2. Continuous 5-second progress fill (0% to 100%)
+    const progressAnimation = Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: 5000,
+      easing: Easing.linear,
+      useNativeDriver: false,
+    });
+
+    progressAnimation.start(({ finished }) => {
+      if (finished && !dismissedRef.current) {
+        dismissedRef.current = true;
+        // 3. Smooth 350ms fade-out once 100% full
+        Animated.timing(fadeAnim, {
+          toValue: 0,
+          duration: 350,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: false,
+        }).start(({ finished: fadeFinished }) => {
+          if (fadeFinished) {
+            onDismissEvent();
+          }
+        });
+      }
+    });
+
+    return () => {
+      progressAnimation.stop();
+    };
+  }, [fadeAnim, progressAnim]);
+
+  function handlePress() {
+    if (dismissedRef.current) return;
+    dismissedRef.current = true;
+    onPress();
+    onDismiss();
+  }
+
+  const fillWidth = useMemo(
+    () =>
+      progressAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0%', '100%'],
+      }),
+    [progressAnim],
+  );
+
+  return (
+    <Animated.View style={{ opacity: fadeAnim }}>
+      <Pressable
+        accessibilityRole="button"
+        hasTVPreferredFocus={Platform.isTV && preferredFocus}
+        onPress={handlePress}
+        style={({ focused, pressed }) => [
+          styles.skipButton,
+          focused && styles.skipButtonFocused,
+          pressed && styles.skipButtonPressed,
+        ]}
+      >
+        {/* Clean, authentic Netflix background fill */}
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.skipProgressFill, { width: fillWidth }]}
+        />
+
+        {/* Content: Label + Skip Icon */}
+        <View style={styles.skipContent}>
+          <Text style={styles.skipLabel}>{label}</Text>
+          <Svg accessible={false} width={14} height={14} viewBox="0 0 24 24">
+            <Path d="M5 5l10 7-10 7V5zm12 0v14h2V5h-2z" fill="#FFFFFF" />
+          </Svg>
+        </View>
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -266,12 +370,20 @@ function PlayerSession({
     return start !== null && actionPosition >= start && (action.end === undefined || actionPosition < action.end);
   });
   const activeActionId = activeAction?.id;
-  const showAction = controls && !cast.casting && activeAction !== undefined && activeActionId !== dismissedAction &&
+
+  const introEnd = skipIntro && duration !== null && !seekDisabled && !loading &&
+    Number.isFinite(skipIntro.start) && skipIntro.start >= 0 &&
+    skipIntro.end > skipIntro.start && skipIntro.end <= duration &&
+    player.position >= skipIntro.start && player.position < skipIntro.end
+    ? skipIntro.end : null;
+
+  const activeSegmentId = activeActionId ?? (introEnd !== null ? 'skip-intro-prop' : null);
+
+  const showAction = controls && !cast.casting && activeAction !== undefined && activeSegmentId !== dismissedAction &&
     !loading && !player.error && !trackSettings && !showPauseDetails && timelinePreview === null && gestures.preview === null;
 
-  useEffect(() => {
-    setDismissedAction((id) => id === activeActionId ? id : null);
-  }, [activeActionId]);
+  const showIntroProp = controls && !cast.casting && !activeAction && introEnd !== null && activeSegmentId !== dismissedAction &&
+    !loading && !player.error && !trackSettings && !showPauseDetails && timelinePreview === null && gestures.preview === null;
 
   useEffect(() => {
     if (!timedActions) return;
@@ -394,12 +506,6 @@ function PlayerSession({
       setScrubPosition(target);
     }
   }
-
-  const introEnd = skipIntro && duration !== null && !seekDisabled && !loading &&
-    Number.isFinite(skipIntro.start) && skipIntro.start >= 0 &&
-    skipIntro.end > skipIntro.start && skipIntro.end <= duration &&
-    player.position >= skipIntro.start && player.position < skipIntro.end
-    ? skipIntro.end : null;
 
   return (
     <View style={styles.player} onLayout={({ nativeEvent: { layout: { width, height } } }) => {
@@ -566,22 +672,35 @@ function PlayerSession({
                 </View>
               </View>
           )}
-          {!cast.casting && (showAction || (showControls && !activeAction && introEnd !== null)) && (
+          {!cast.casting && (showAction || showIntroProp) && activeSegmentId !== null && (
             <View style={[styles.intro, {
               right: insets.right + edge, bottom: insets.bottom + edge + (showControls ? 62 : 0),
             }]}>
               {showAction ? (
-                <PlayerButton
+                <SkipTimedButton
+                  key={activeSegmentId}
                   label={activeAction.label}
                   preferredFocus={!showControls}
                   onPress={() => {
-                    setDismissedAction(activeAction.id);
                     onEvent?.({ type: 'timedActionPressed', sourceId: source.id, actionId: activeAction.id, position: actionPosition });
                     activeAction.onPress(playerControls);
                   }}
+                  onDismiss={() => {
+                    setDismissedAction(activeSegmentId);
+                  }}
                 />
-              ) : introEnd !== null ? (
-                <PlayerButton label="Skip Intro" onPress={() => player.seekTo(introEnd)} />
+              ) : showIntroProp ? (
+                <SkipTimedButton
+                  key={activeSegmentId}
+                  label="Skip Intro"
+                  preferredFocus={!showControls}
+                  onPress={() => {
+                    if (introEnd !== null) player.seekTo(introEnd);
+                  }}
+                  onDismiss={() => {
+                    setDismissedAction(activeSegmentId);
+                  }}
+                />
               ) : null}
             </View>
           )}
@@ -673,16 +792,65 @@ const styles = StyleSheet.create({
     minHeight: Platform.isTV ? 54 : 48,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    paddingHorizontal: 20,
+    borderRadius: 12,
     borderWidth: 2,
     borderColor: 'transparent',
     backgroundColor: colors.primary,
+  },
+  skipButton: {
+    minHeight: Platform.isTV ? 48 : 40,
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.75)',
+    backgroundColor: 'rgba(10, 10, 10, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  skipButtonFocused: {
+    borderColor: '#38BDF8',
+    backgroundColor: 'rgba(56, 189, 248, 0.3)',
+    transform: [{ scale: 1.05 }],
+  },
+  skipButtonPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.98 }],
+  },
+  skipProgressFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(56, 189, 248, 0.35)',
+  },
+  skipContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    zIndex: 1,
+  },
+  skipLabel: {
+    color: '#FFFFFF',
+    fontFamily: fonts.bold,
+    fontSize: Platform.isTV ? 16 : 14,
+    letterSpacing: 0.4,
   },
   secondary: { backgroundColor: 'transparent', borderColor: colors.border },
   active: { backgroundColor: colors.pressed },
   focused: { backgroundColor: colors.selected, borderColor: colors.focus },
   disabled: { opacity: 0.45 },
-  label: { color: colors.text, fontSize: Platform.isTV ? 18 : 15, fontFamily: fonts.bold, textAlign: 'center' },
+  label: { fontSize: Platform.isTV ? 18 : 15, fontFamily: fonts.bold, textAlign: 'center' },
+  primaryLabel: { color: '#000000' },
+  secondaryLabel: { color: colors.text },
   error: { color: colors.error, fontFamily: fonts.regular, textAlign: 'center', maxWidth: '68%', alignSelf: 'center' },
 });
