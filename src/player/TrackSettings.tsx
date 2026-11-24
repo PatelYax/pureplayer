@@ -45,23 +45,81 @@ function Option({ label, onPress, selected, preferred = false, disabled = false 
   );
 }
 
+let languageNames: Intl.DisplayNames | null = null;
+try {
+  languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
+} catch {
+  // Fallback if Intl.DisplayNames is not supported
+}
+
+function normalizeLanguageName(codeOrName: string | undefined): string | null {
+  if (!codeOrName) return null;
+  const trimmed = codeOrName.trim();
+  const lower = trimmed.toLowerCase();
+
+  // If it's an undetermined code, ignore it so it falls back to Audio 1 / Subtitle 1
+  if (
+    lower === 'und' ||
+    lower === 'root' ||
+    lower === 'unknown' ||
+    lower === 'undefined' ||
+    lower === 'none'
+  ) {
+    return null;
+  }
+
+  // If it's a 2 or 3 letter ISO code (e.g. 'en', 'es', 'ta', 'hin', 'fra') or 'en-US'
+  if (/^[a-z]{2,3}(-[a-z0-9]+)?$/i.test(trimmed) && languageNames) {
+    try {
+      const resolved = languageNames.of(trimmed);
+      if (
+        resolved &&
+        resolved.toLowerCase() !== 'root' &&
+        resolved.toLowerCase() !== 'und' &&
+        resolved.toLowerCase() !== 'unknown'
+      ) {
+        return resolved;
+      }
+    } catch {
+      // Ignore resolution error
+    }
+  }
+
+  return trimmed;
+}
+
 function getTrackLabel(
   track: AudioTrack | SubtitleTrack,
   index: number,
   allTracks: (AudioTrack | SubtitleTrack)[],
   fallbackPrefix: string,
 ): string {
-  const baseLabel = (track as any).label || (track as any).name || track.language;
+  const rawLabel = (track as any).label || (track as any).name;
+  const rawLang = track.language;
+  const baseLabel =
+    normalizeLanguageName(rawLabel) || normalizeLanguageName(rawLang);
+
   if (!baseLabel) {
+    if (fallbackPrefix === 'Audio' && allTracks.length === 1) {
+      return 'Default Audio';
+    }
     return `${fallbackPrefix} ${index + 1}`;
   }
-  const duplicates = allTracks.filter(
-    (t) => ((t as any).label || (t as any).name || t.language) === baseLabel,
-  );
+
+  // Check how many tracks resolve to this exact base label
+  const duplicates = allTracks.filter((t) => {
+    const tLabel = (t as any).label || (t as any).name;
+    const tLang = t.language;
+    const tBase =
+      normalizeLanguageName(tLabel) || normalizeLanguageName(tLang);
+    return tBase === baseLabel;
+  });
+
   if (duplicates.length > 1) {
     const duplicateIndex = duplicates.indexOf(track);
     return `${baseLabel} (${duplicateIndex + 1})`;
   }
+
   return baseLabel;
 }
 
