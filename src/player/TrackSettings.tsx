@@ -45,6 +45,26 @@ function Option({ label, onPress, selected, preferred = false, disabled = false 
   );
 }
 
+function getTrackLabel(
+  track: AudioTrack | SubtitleTrack,
+  index: number,
+  allTracks: (AudioTrack | SubtitleTrack)[],
+  fallbackPrefix: string,
+): string {
+  const baseLabel = (track as any).label || (track as any).name || track.language;
+  if (!baseLabel) {
+    return `${fallbackPrefix} ${index + 1}`;
+  }
+  const duplicates = allTracks.filter(
+    (t) => ((t as any).label || (t as any).name || t.language) === baseLabel,
+  );
+  if (duplicates.length > 1) {
+    const duplicateIndex = duplicates.indexOf(track);
+    return `${baseLabel} (${duplicateIndex + 1})`;
+  }
+  return baseLabel;
+}
+
 export function TrackSettings({
   mode, audioTracks, subtitleTracks, audioTrack, subtitleTrack, selectAudio, selectSubtitle,
   videoQualities, videoQuality, videoSize, selectVideoQuality, onClose,
@@ -104,20 +124,44 @@ export function TrackSettings({
                 ))}
               </>
             )}
-            {mode === 'audio' && audioTracks.map((track, i) => (
-                  <Option key={track.id} label={track.name || track.label || track.language || `Audio ${i + 1}`}
-                    selected={audioTrack?.id === track.id} preferred={audioTrack ? audioTrack.id === track.id : i === 0}
-                    onPress={() => { selectAudio(track); onClose(); }} />
-            ))}
+            {mode === 'audio' && audioTracks.map((track, i) => {
+              const label = getTrackLabel(track, i, audioTracks, 'Audio');
+              const isSelected = audioTrack
+                ? (audioTrack.id && track.id ? audioTrack.id === track.id : audioTrack === track)
+                : i === 0;
+              return (
+                <Option
+                  key={`${track.id ?? 'audio'}-${i}`}
+                  label={label}
+                  selected={isSelected}
+                  preferred={isSelected}
+                  onPress={() => { selectAudio(track); onClose(); }}
+                />
+              );
+            })}
             {mode === 'subtitles' && (
               <>
-                <Option label="Off" selected={subtitleTrack === null} preferred={subtitleTrack === null}
-                  onPress={() => { selectSubtitle(null); onClose(); }} />
-                {subtitleTracks.map((track, i) => (
-                  <Option key={track.id} label={track.name || track.label || track.language || `Subtitle ${i + 1}`}
-                    selected={subtitleTrack?.id === track.id} preferred={subtitleTrack?.id === track.id}
-                    onPress={() => { selectSubtitle(track); onClose(); }} />
-                ))}
+                <Option
+                  label="Off"
+                  selected={subtitleTrack === null}
+                  preferred={subtitleTrack === null}
+                  onPress={() => { selectSubtitle(null); onClose(); }}
+                />
+                {subtitleTracks.map((track, i) => {
+                  const label = getTrackLabel(track, i, subtitleTracks, 'Subtitle');
+                  const isSelected = subtitleTrack
+                    ? (subtitleTrack.id && track.id ? subtitleTrack.id === track.id : subtitleTrack === track)
+                    : false;
+                  return (
+                    <Option
+                      key={`${track.id ?? 'sub'}-${i}`}
+                      label={label}
+                      selected={isSelected}
+                      preferred={isSelected}
+                      onPress={() => { selectSubtitle(track); onClose(); }}
+                    />
+                  );
+                })}
                 {Platform.OS === 'android' && (
                   <Option label="Subtitle style: text and background colors" onPress={openCaptionStyle} />
                 )}

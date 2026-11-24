@@ -43,10 +43,15 @@ export function PlayerButton({
   );
 }
 
-function formatTime(seconds: number) {
+function formatTime(seconds: number, forceHours: boolean = false) {
   const whole = Math.max(0, Math.floor(seconds));
-  const minutes = Math.floor(whole / 60);
-  return `${minutes}:${String(whole % 60).padStart(2, '0')}`;
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor((whole % 3600) / 60);
+  const secs = whole % 60;
+  if (hours > 0 || forceHours) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(secs).padStart(2, '0')}`;
 }
 
 const icons = {
@@ -249,6 +254,7 @@ function PlayerSession({
   const timelinePreview = scrubPosition ?? tvSeekPreview;
   const displayedPosition = timelinePreview ?? gestures.preview ?? player.position;
   const progress = duration ? Math.min(100, Math.max(0, displayedPosition / duration * 100)) : 0;
+  const showHours = (duration !== null && duration >= 3600) || displayedPosition >= 3600;
 
   const loading = player.state === 'loading' || (player.state === 'idle' && !player.ended);
   const actionPosition = player.ended ? duration ?? player.position : player.position;
@@ -521,7 +527,7 @@ function PlayerSession({
                     accessibilityRole={Platform.isTV ? undefined : 'adjustable'}
                     accessibilityState={{ disabled: seekDisabled }}
                     accessibilityLabel="Playback position"
-                    accessibilityValue={{ min: 0, max: 100, now: Math.round(progress), text: formatTime(displayedPosition) }}
+                    accessibilityValue={{ min: 0, max: 100, now: Math.round(progress), text: formatTime(displayedPosition, showHours) }}
                     accessibilityActions={Platform.isTV ? undefined : [{ name: 'increment' }, { name: 'decrement' }]}
                     onAccessibilityAction={({ nativeEvent }) => {
                       if (nativeEvent.actionName === 'increment') player.seekTo(player.position + 10);
@@ -549,14 +555,14 @@ function PlayerSession({
                       <View pointerEvents="none" style={[styles.scrubLabel, {
                         left: Math.max(0, Math.min(timelineWidth - scrubLabelWidth, timelineWidth * progress / 100 - scrubLabelWidth / 2)),
                       }]}>
-                        <Text style={styles.scrubTime}>{formatTime(timelinePreview)}</Text>
+                        <Text style={styles.scrubTime}>{formatTime(timelinePreview, showHours || timelinePreview >= 3600)}</Text>
                       </View>
                     )}
                   </View>
                 )}
                 <View style={styles.times}>
-                  <Text style={styles.time}>{formatTime(displayedPosition)}</Text>
-                  <Text style={styles.time}>{duration === null ? '--:--' : formatTime(duration)}</Text>
+                  <Text style={styles.time}>{formatTime(displayedPosition, showHours)}</Text>
+                  <Text style={styles.time}>{duration === null ? '--:--' : formatTime(duration, showHours)}</Text>
                 </View>
               </View>
           )}
