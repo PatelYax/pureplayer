@@ -2,16 +2,22 @@
   "expo": {
     "name": "PurePlayer",
     "slug": "pureplayer",
-    "version": "0.1.0",
+    "version": "0.1.1",
+    "versionCode": 2,
     "platforms": [
       "android"
     ],
     "orientation": "default",
+    "icon": ".\\assets\\icon.png",
     "android": {
-      "package": "com.pureplayer.app"
+      "package": "com.pureplayer.app",
+      "adaptiveIcon": {
+        "foregroundImage": ".\\assets\\adaptive-icon.png",
+        "backgroundColor": "#071425"
+      }
     },
     "plugins": [
-      "@react-native-tvos/config-tv",
+      ["@react-native-tvos/config-tv", { "androidTVBanner": ".\\assets\\tv-banner.png" }],
       "expo-video",
       "./plugins/withHttpPlayback",
       ["./plugins/withCmakeVersion", { "version": "4.1.2" }]

@@ -58,7 +58,7 @@ function Home() {
       <View style={styles.screen}>
         <StatusBar hidden={!Platform.isTV} />
         {!Platform.isTV && <NavigationBar hidden />}
-        <PurePlayer source={source} autoRotate onBack={() => setSource(null)} />
+        <PurePlayer source={source} autoRotate onExit={() => setSource(null)} />
       </View>
     );
   }

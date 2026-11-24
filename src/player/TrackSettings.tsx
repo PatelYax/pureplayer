@@ -11,6 +11,7 @@ type Props = {
   selectAudio: (track: AudioTrack) => void;
   selectSubtitle: (track: SubtitleTrack | null) => void;
   onClose: () => void;
+  onBack: () => void;
 };
 
 function Option({ label, onPress, selected, preferred = false }: {
@@ -32,7 +33,7 @@ function Option({ label, onPress, selected, preferred = false }: {
   );
 }
 
-export function TrackSettings({ audioTracks, subtitleTracks, audioTrack, subtitleTrack, selectAudio, selectSubtitle, onClose }: Props) {
+export function TrackSettings({ audioTracks, subtitleTracks, audioTrack, subtitleTrack, selectAudio, selectSubtitle, onClose, onBack }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   async function openCaptionStyle() {
@@ -46,7 +47,7 @@ export function TrackSettings({ audioTracks, subtitleTracks, audioTrack, subtitl
   }
 
   return (
-    <Modal transparent statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
+    <Modal transparent statusBarTranslucent navigationBarTranslucent onRequestClose={onBack}>
       <View style={styles.backdrop}>
         <View accessibilityViewIsModal style={styles.panel}>
           <Text accessibilityRole="header" style={styles.heading}>Audio &amp; Subtitles</Text>

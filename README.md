@@ -50,6 +50,8 @@ Pop-Location
 
 Use the same `android\app\build\outputs\apk\release\app-release.apk` on each supported device. It does not need Metro. The generated release configuration uses debug signing, so use this APK for sideloading and testing only.
 
+The custom PurePlayer launcher icon, adaptive icon, and TV banner are configured in [app.json](./app.json). After changing the artwork, run Android prebuild and rebuild and reinstall the app; restarting Metro does not update launcher assets.
+
 For Google Play, configure the Gradle release build to use your upload key instead of the debug key, then build an Android App Bundle:
 
 ```powershell
@@ -64,11 +66,11 @@ The bundle is at `android\app\build\outputs\bundle\release\app-release.aab`. App
 
 - **Play a URL:** Under **Stream a video**, paste a direct media URL, such as an MP4, HLS (`.m3u8`), or DASH (`.mpd`) link. A webpage URL is not a video URL. Prefer HTTPS. Plain HTTP is unencrypted; use it only for trusted sources such as a local media server. The project enables Android cleartext traffic app-wide through its Expo config plugin. Changing that setting requires regenerating and rebuilding the native app, not just restarting Metro.
 - **Play a local file:** Select **Open downloaded video** and choose a file from Android's picker. PurePlayer opens files you already have; it does not download videos.
-- **Fullscreen and orientation:** The standalone app hides Android's status and navigation bars during phone/tablet playback. It opens in landscape and follows the video's dimensions once known because the app enables `autoRotate`. Android TV and Google TV never request rotation. **Fit** shows the whole frame; **Fill** zooms to cover the screen and can crop the edges.
-- **Touch:** Tap the video while it plays to show or hide controls. Tap the timeline to seek directly, or drag it to preview a timestamp and release to seek. Double-tap either side, then keep tapping to add 10 seconds per tap; PurePlayer previews the target and seeks once the taps stop. Drag the left brightness slider up or down; system brightness takes over again when playback closes. Use the device controls for volume.
-- **TV remote:** Focus the timeline and tap Left or Right repeatedly to queue 10-second steps, or hold either button and release to seek. Brightness gestures are disabled on TV.
+- **Fullscreen and orientation:** The standalone app hides Android's status and navigation bars during phone/tablet playback. It opens in landscape and follows the video's dimensions once known because the app enables `autoRotate`. Android TV and Google TV never request rotation. On phones and tablets, **Fit** shows the whole frame and **Fill** zooms to cover the screen, which can crop the edges. TV always uses Fit without a toggle.
+- **Touch:** Tap the video to show or hide controls. Tap the timeline to seek directly, or drag it to preview a timestamp and release to seek. Double-tap either side, then keep tapping to add 10 seconds per tap; PurePlayer previews the target and seeks once the taps stop. Drag the left brightness slider up or down; system brightness takes over again when playback closes. Use the device controls for volume.
+- **TV remote:** The controls and timeline hide after four seconds without remote input during playback. Auto-hide waits while paused, buffering, previewing a seek, or using audio and subtitle settings. Press OK to show the controls again. Hold Left or Right to gradually speed up the seek preview. The timeline and target timestamp update alongside the same chevrons and signed offset used by mobile touch seeking, even when controls are hidden. Playback jumps only on release. The timeline is display-only. Short presses navigate visible controls; when controls are hidden, Left and Right queue 10-second steps instead. Brightness gestures are disabled on TV.
 - **Audio and subtitles:** The menu appears if the video exposes multiple audio tracks or supported subtitle tracks. Select a track or turn subtitles off. **Subtitle style** opens Android's accessibility caption settings for text and background colors, where available. Those settings are device-wide.
-- **Navigation:** The back arrow and Android Back return home in the standalone app. If embedded, the host can supply back, previous, next, or Skip Intro behavior as described below.
+- **Navigation:** The back arrow and Android Back hide visible controls immediately. With controls hidden, Android Back shows **Press Back again to exit**; press it again within two seconds to leave playback. The standalone app returns to its home screen.
 - **Loading and errors:** A centered blue spinner shows during loading or buffering without a dimming background. Playback failures show a message, and finishing a video exposes Replay.
 
 Dolby Vision, HDR, and Atmos output are not guaranteed: they depend on the stream or file, Android device, and connected display or audio equipment. Verify the actual output on the target hardware.
@@ -81,7 +83,7 @@ Import the component from [PurePlayer.tsx](./src/player/PurePlayer.tsx) and rend
 <PurePlayer
   source={{ id: 1, uri: 'https://example.com/episode.m3u8', format: 'hls' }}
   autoRotate
-  onBack={goBack}
+  onExit={goBack}
   onPrev={playPreviousEpisode}
   onNext={playNextEpisode}
   skipIntro={{ start: 5, end: 42 }}
@@ -103,8 +105,9 @@ Use a stable numeric `source.id` for the current video and a new ID when switchi
 | `autoRotate` | Defaults to `false` on the component; the standalone app enables it. When enabled, playback follows the video dimensions once available. Square video releases the orientation lock. Ignored on TV. |
 | `initialOrientation` | `'landscape'` (default) or `'portrait'`. With `autoRotate` off, playback stays in this orientation. Ignored on TV. |
 | `lockedOrientation` | `'landscape'` or `'portrait'`. Overrides the starting orientation and video-based rotation for the whole session. The lock is released on exit. Ignored on TV. |
-| `onBack` | Called by the back arrow and Android Back when no `backRoute` is supplied. Connect it to your router's normal back action. If no back action is configured, the component leaves Android Back to the host and hides the arrow. |
-| `backRoute` and `navigate` | Pass both, for example `backRoute="/library" navigate={navigateToRoute}`. Overrides `onBack` for both back actions. PurePlayer does not own the router. |
+| `onExit` | Called on the second Back press within two seconds while controls are hidden. Takes precedence over route navigation and the legacy back callbacks. |
+| `onBack` | Fallback callback for confirmed exit when neither `onExit` nor `backRoute` is supplied. If no exit action is configured, the confirmed press falls through to normal Android or host back navigation. |
+| `backRoute` and `navigate` | Pass both, for example `backRoute="/library" navigate={navigateToRoute}`. Used on confirmed exit if no `onExit` is passed. PurePlayer does not own the router. |
 | `onClose` | Deprecated fallback for `onBack`. |
 | `onPrev`, `onNext` | Show their respective buttons only when supplied. The host chooses the previous or next source. |
 | `skipIntro` | `{ start, end }` in seconds. Shows **Skip Intro** while playback is within `[start, end)` and seeks to `end` when pressed. Requires a valid range within a known duration. |
