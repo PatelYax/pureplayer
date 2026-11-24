@@ -77,6 +77,10 @@ Dolby Vision, HDR, and Atmos output are not guaranteed: they depend on the strea
 
 ## Embed PurePlayer
 
+See [INTEGRATION.md](./INTEGRATION.md) for the exact copy/paste file list, host build setup, usage examples, and full API reference.
+
+For Continue Watching, pass `initialPosition` and persist `checkpoint` events in the host app. Use `timedActions` for buttons such as Skip Intro or Next Episode, or a `ref` to call playback methods on the built-in player. See the [Continue Watching and timed actions example](./INTEGRATION.md#continue-watching-skip-intro-and-next-episode).
+
 Import the component from [PurePlayer.tsx](./src/player/PurePlayer.tsx) and render it inside your app's `SafeAreaProvider`, in a container with available space (for example, `flex: 1`). Keep the native dependencies listed in [package.json](./package.json) and rebuild the host app after adding them. If the host should hide Android system bars during playback, apply that behavior in the surrounding screen as [the standalone app](./src/App.tsx) does.
 
 ```tsx
@@ -100,6 +104,8 @@ Use a stable numeric `source.id` for the current video and a new ID when switchi
 | Prop | Behavior |
 | --- | --- |
 | `source` | Required video source: `{ id, uri, format? }`. |
+| `initialPosition`, `autoPlay` | Optional saved position in seconds and whether playback starts automatically (default `true`). |
+| `ref` | Optional React ref for `PlayerControls` methods. |
 | `onEvent` | Receives typed playback events even when the built-in controls are hidden. |
 | `controls` | Defaults to `true`. Pass `false` to hide the built-in playback UI and gestures. |
 | `autoRotate` | Defaults to `false` on the component; the standalone app enables it. When enabled, playback follows the video dimensions once available. Square video releases the orientation lock. Ignored on TV. |
@@ -111,6 +117,7 @@ Use a stable numeric `source.id` for the current video and a new ID when switchi
 | `onClose` | Deprecated fallback for `onBack`. |
 | `onPrev`, `onNext` | Show their respective buttons only when supplied. The host chooses the previous or next source. |
 | `skipIntro` | `{ start, end }` in seconds. Shows **Skip Intro** while playback is within `[start, end)` and seeks to `end` when pressed. Requires a valid range within a known duration. |
+| `timedActions` | Custom buttons with a label, a time window, and a callback that receives playback methods. |
 
 ### Playback events
 
@@ -128,9 +135,14 @@ Every `PlayerEvent` has a `type` discriminant and the numeric `sourceId` from `s
 | `videoSizeChanged` | `width: number`, `height: number` | Valid video dimensions are discovered from metadata or change with the active track. Repeated identical sizes are suppressed. |
 | `progress` | `position: number`, `bufferedPosition: number \| null` | Expo Video sends a time update (configured for roughly every 250 ms). `bufferedPosition` is a position on the timeline, not a percent; `null` means unavailable. |
 | `seekStarted` | `position: number` | PurePlayer sends a seek request, with the target clamped to the known duration. Previewing a drag or queued seek does not emit it. It **does not** confirm seek completion. |
+| `resumeApplied` | `position: number` | A saved starting position is sent to the engine. |
+| `checkpoint` | `reason: 'pause' \| 'background' \| 'exit' \| 'ended'`, `position`, `duration`, `ended` | Snapshot for saving Continue Watching progress. |
+| `timedActionPressed` | `actionId: string`, `position: number` | The user presses a custom timed button. |
 | `audioTrackChanged` | `track: AudioTrack \| null` | The engine reports a change to the selected audio track. `null` means no selected track was reported. |
 | `subtitleTrackChanged` | `track: SubtitleTrack \| null` | The engine reports a change to the selected subtitle track. `null` means no subtitle track is selected. |
 | `volumeChanged` | `volume: number` | The engine reports its volume level (`0` to `1`). This is player volume, not Android's master volume. |
+| `mutedChanged` | `muted: boolean` | The engine reports a mute change. |
+| `playbackRateChanged` | `playbackRate: number` | The engine reports a playback speed change. |
 | `ended` | None | The engine reports playback reached the end. |
 | `error` | `code: 'PLAYBACK_FAILED'`, `message: string` | Source setup or playback fails. The message is suitable for display. |
 
@@ -138,7 +150,7 @@ Every `PlayerEvent` has a `type` discriminant and the numeric `sourceId` from `s
 
 ### Use the playback hook directly
 
-[usePurePlayer.ts](./src/player/usePurePlayer.ts) exports `usePurePlayer(source, onEvent?)`, `PlayerSource`, and `PlayerEvent`. The hook exposes the Expo Video `engine`, current playback state, position, duration, dimensions, error, volume, and available/selected audio and subtitle tracks. It also exposes `play()`, `pause()`, `seekTo(seconds)`, `setVolume(level)`, `selectAudio(track)`, and `selectSubtitle(track)` (pass `null` to turn subtitles off).
+[usePurePlayer.ts](./src/player/usePurePlayer.ts) exports `usePurePlayer(source, onEvent?, options?)`, `PlayerSource`, `PlayerEvent`, and `PlayerControls`. The hook exposes the Expo Video `engine`, reactive player state, and the same playback methods available through the component ref. See the [full method and state reference](./INTEGRATION.md#playback-methods-and-state).
 
 For a custom UI, use `engine` as your Expo `VideoView`'s `player` and wire `onFirstFrameRender` to the hook's `firstFrameRendered` callback if you need that event. Key the component that calls the hook by `source.id`, as `PurePlayer` does.
 

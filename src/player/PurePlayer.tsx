@@ -1,9 +1,9 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import { VideoView } from 'expo-video';
 import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
-import { usePurePlayer, type PlayerEvent, type PlayerSource } from './usePurePlayer';
+import { usePurePlayer, type PlaybackOptions, type PlayerControls, type PlayerEvent, type PlayerSource } from './usePurePlayer';
 import { usePlaybackOrientation, type PlaybackOrientation } from './usePlaybackOrientation';
 import { usePlaybackBrightness } from './usePlaybackBrightness';
 import { useSeekGestures } from './useSeekGestures';
@@ -153,8 +153,19 @@ type BackNavigation =
   | { backRoute?: undefined; navigate?: undefined }
   | { backRoute: string; navigate: (route: string) => void };
 
-export type PurePlayerProps = BackNavigation & {
+export type TimedPlayerAction = {
+  id: string;
+  label: string;
+  end?: number;
+  onPress: (player: PlayerControls) => void;
+} & (
+  | { start: number; secondsBeforeEnd?: never }
+  | { start?: never; secondsBeforeEnd: number }
+);
+
+export type PurePlayerProps = BackNavigation & PlaybackOptions & {
   source: PlayerSource;
+  ref?: Ref<PlayerControls>;
   onEvent?: (event: PlayerEvent) => void;
   controls?: boolean;
   autoRotate?: boolean;
@@ -167,6 +178,7 @@ export type PurePlayerProps = BackNavigation & {
   onNext?: () => void;
   onPrev?: () => void;
   skipIntro?: { start: number; end: number };
+  timedActions?: readonly TimedPlayerAction[];
 };
 
 export function PurePlayer({
@@ -177,12 +189,20 @@ export function PurePlayer({
 
 function PlayerSession({
   source, onEvent, controls = true, autoRotate = false, initialOrientation, lockedOrientation,
-  onExit, onBack, onClose, backRoute, navigate, onNext, onPrev, skipIntro,
+  onExit, onBack, onClose, backRoute, navigate, onNext, onPrev, skipIntro, timedActions,
+  ref, initialPosition, autoPlay,
 }: PurePlayerProps) {
-  const player = usePurePlayer(source, onEvent);
+  const player = usePurePlayer(source, onEvent, { initialPosition, autoPlay });
+  const playerControls: PlayerControls = {
+    play: player.play, pause: player.pause, replay: player.replay, seekTo: player.seekTo, seekBy: player.seekBy,
+    setVolume: player.setVolume, setMuted: player.setMuted, setPlaybackRate: player.setPlaybackRate,
+    selectAudio: player.selectAudio, selectSubtitle: player.selectSubtitle, getPlaybackSnapshot: player.getPlaybackSnapshot,
+  };
+  useImperativeHandle(ref, () => playerControls);
   const insets = useSafeAreaInsets();
   const edge = Platform.isTV ? 24 : 14;
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [dismissedAction, setDismissedAction] = useState<string | null>(null);
   const [tvActivity, setTvActivity] = useState(0);
   const [exitHintVisible, setExitHintVisible] = useState(false);
   const exitDeadline = useRef(0);
@@ -206,6 +226,35 @@ function PlayerSession({
   const hasTrackSettings = player.audioTracks.length > 1 || player.subtitleTracks.length > 0;
 
   const loading = player.state === 'loading' || (player.state === 'idle' && !player.ended);
+  const actionPosition = player.ended ? duration ?? player.position : player.position;
+  const activeAction = timedActions?.find((action) => {
+    const offset = action.start ?? action.secondsBeforeEnd;
+    if (!action.id.trim() || !action.label.trim() || !Number.isFinite(offset) || offset < 0 ||
+      (action.end !== undefined && !Number.isFinite(action.end))) return false;
+    const start = action.start ?? (duration === null ? null : Math.max(0, duration - action.secondsBeforeEnd));
+    return start !== null && actionPosition >= start && (action.end === undefined || actionPosition < action.end);
+  });
+  const activeActionId = activeAction?.id;
+  const showAction = controls && activeAction !== undefined && activeActionId !== dismissedAction &&
+    !loading && !player.error && !trackSettingsOpen && timelinePreview === null && gestures.preview === null;
+
+  useEffect(() => {
+    setDismissedAction((id) => id === activeActionId ? id : null);
+  }, [activeActionId]);
+
+  useEffect(() => {
+    if (!timedActions) return;
+    const ids = new Set<string>();
+    for (const action of timedActions) {
+      const start = action.start ?? action.secondsBeforeEnd;
+      if (!action.id.trim() || !action.label.trim() || ids.has(action.id) || !Number.isFinite(start) || start < 0 ||
+        (action.end !== undefined && (!Number.isFinite(action.end) || action.end <= (action.start ?? 0)))) {
+        console.warn(`PurePlayer timed action "${action.id}" needs a unique ID, a label, and a valid time window.`);
+      }
+      ids.add(action.id);
+    }
+  }, [timedActions]);
+
   const canAutoHide = Platform.isTV && showControls && player.isPlaying && !player.ended &&
     !loading && !player.error && !trackSettingsOpen && gestures.preview === null;
 
@@ -240,10 +289,11 @@ function PlayerSession({
     setScrubPosition(null);
     setTrackSettingsOpen(false);
     setControlsVisible(false);
+    if (activeAction) setDismissedAction(activeAction.id);
   }
 
   const handleHardwareBack = useEffectEvent(() => {
-    if (showControls || trackSettingsOpen) {
+    if (showControls || trackSettingsOpen || showAction) {
       hideControls();
       return true;
     }
@@ -258,6 +308,8 @@ function PlayerSession({
     }
 
     clearExitHint();
+    const snapshot = player.getPlaybackSnapshot();
+    if (snapshot.duration !== null) onEvent?.({ type: 'checkpoint', sourceId: source.id, reason: 'exit', ...snapshot });
     const exit = onExit ?? (backRoute !== undefined ? () => navigate(backRoute) : onBack ?? onClose);
     if (!exit) return false;
     exit();
@@ -321,10 +373,10 @@ function PlayerSession({
           )}
           {Platform.isTV && !showControls && (
             <Pressable
-              style={StyleSheet.absoluteFill}
+              style={showAction ? styles.tvShowControlsTarget : StyleSheet.absoluteFill}
               accessibilityRole="button"
               accessibilityLabel="Show playback controls"
-              hasTVPreferredFocus
+              hasTVPreferredFocus={!showAction}
               onPress={toggleControls}
             />
           )}
@@ -428,18 +480,30 @@ function PlayerSession({
                     )}
                   </View>
                 )}
-                {showControls && introEnd !== null && (
-                  <View style={[styles.intro, {
-                    right: insets.right + edge, bottom: insets.bottom + edge + 62,
-                  }]}>
-                    <PlayerButton label="Skip Intro" onPress={() => player.seekTo(introEnd)} />
-                  </View>
-                )}
                 <View style={styles.times}>
                   <Text style={styles.time}>{formatTime(displayedPosition)}</Text>
                   <Text style={styles.time}>{duration === null ? '--:--' : formatTime(duration)}</Text>
                 </View>
               </View>
+          )}
+          {(showAction || (showControls && !activeAction && introEnd !== null)) && (
+            <View style={[styles.intro, {
+              right: insets.right + edge, bottom: insets.bottom + edge + (showControls ? 62 : 0),
+            }]}>
+              {showAction ? (
+                <PlayerButton
+                  label={activeAction.label}
+                  preferredFocus={!showControls}
+                  onPress={() => {
+                    setDismissedAction(activeAction.id);
+                    onEvent?.({ type: 'timedActionPressed', sourceId: source.id, actionId: activeAction.id, position: actionPosition });
+                    activeAction.onPress(playerControls);
+                  }}
+                />
+              ) : introEnd !== null ? (
+                <PlayerButton label="Skip Intro" onPress={() => player.seekTo(introEnd)} />
+              ) : null}
+            </View>
           )}
           {gestures.feedback && (
             <View pointerEvents="none" style={[
@@ -490,6 +554,7 @@ const styles = StyleSheet.create({
   brightnessTrack: { width: 7, height: '100%', borderRadius: 4, overflow: 'hidden', backgroundColor: '#52627BC9', justifyContent: 'flex-end' },
   brightnessFill: { backgroundColor: colors.accent, borderRadius: 4 },
   intro: { position: 'absolute', zIndex: 2 },
+  tvShowControlsTarget: { position: 'absolute', width: 72, height: 72, top: '50%', alignSelf: 'center', marginTop: -36 },
   timeline: { position: 'absolute' },
   seekTarget: { minHeight: 34, justifyContent: 'center' },
   scrubLabel: {
