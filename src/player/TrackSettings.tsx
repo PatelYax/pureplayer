@@ -54,16 +54,17 @@ try {
 
 function normalizeLanguageName(codeOrName: string | undefined): string | null {
   if (!codeOrName) return null;
-  const trimmed = codeOrName.trim();
+  const trimmed = String(codeOrName).trim();
   const lower = trimmed.toLowerCase();
 
-  // If it's an undetermined code, ignore it so it falls back to Audio 1 / Subtitle 1
+  // If it's an undetermined code or technical index (e.g. audio_0, 0), ignore it
   if (
     lower === 'und' ||
     lower === 'root' ||
     lower === 'unknown' ||
     lower === 'undefined' ||
-    lower === 'none'
+    lower === 'none' ||
+    /^(audio|sub|track|stream)?_?\d+$/i.test(trimmed)
   ) {
     return null;
   }
@@ -94,10 +95,15 @@ function getTrackLabel(
   allTracks: (AudioTrack | SubtitleTrack)[],
   fallbackPrefix: string,
 ): string {
-  const rawLabel = (track as any).label || (track as any).name;
-  const rawLang = track.language;
+  // In expo-video on Android, the HLS manifest NAME (e.g. "Hindi", "Original") is mapped to track.name!
+  // Meanwhile, track.label is mapped to Locale(language).displayLanguage which is often "und" or "Unknown".
+  const candidateName = normalizeLanguageName((track as any).name);
+  const candidateLabel = normalizeLanguageName((track as any).label);
+  const candidateLang = normalizeLanguageName(track.language);
+  const candidateId = normalizeLanguageName((track as any).id);
+
   const baseLabel =
-    normalizeLanguageName(rawLabel) || normalizeLanguageName(rawLang);
+    candidateName || candidateLabel || candidateLang || candidateId;
 
   if (!baseLabel) {
     if (fallbackPrefix === 'Audio' && allTracks.length === 1) {
@@ -108,10 +114,11 @@ function getTrackLabel(
 
   // Check how many tracks resolve to this exact base label
   const duplicates = allTracks.filter((t) => {
-    const tLabel = (t as any).label || (t as any).name;
-    const tLang = t.language;
     const tBase =
-      normalizeLanguageName(tLabel) || normalizeLanguageName(tLang);
+      normalizeLanguageName((t as any).name) ||
+      normalizeLanguageName((t as any).label) ||
+      normalizeLanguageName(t.language) ||
+      normalizeLanguageName((t as any).id);
     return tBase === baseLabel;
   });
 
