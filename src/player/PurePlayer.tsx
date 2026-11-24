@@ -196,7 +196,8 @@ function PlayerSession({
   const playerControls: PlayerControls = {
     play: player.play, pause: player.pause, replay: player.replay, seekTo: player.seekTo, seekBy: player.seekBy,
     setVolume: player.setVolume, setMuted: player.setMuted, setPlaybackRate: player.setPlaybackRate,
-    selectAudio: player.selectAudio, selectSubtitle: player.selectSubtitle, getPlaybackSnapshot: player.getPlaybackSnapshot,
+    selectAudio: player.selectAudio, selectSubtitle: player.selectSubtitle, selectVideoQuality: player.selectVideoQuality,
+    getPlaybackSnapshot: player.getPlaybackSnapshot,
   };
   useImperativeHandle(ref, () => playerControls);
   const insets = useSafeAreaInsets();
@@ -223,7 +224,8 @@ function PlayerSession({
   const timelinePreview = scrubPosition ?? tvSeekPreview;
   const displayedPosition = timelinePreview ?? gestures.preview ?? player.position;
   const progress = duration ? Math.min(100, Math.max(0, displayedPosition / duration * 100)) : 0;
-  const hasTrackSettings = player.audioTracks.length > 1 || player.subtitleTracks.length > 0;
+  const hasTrackSettings = player.audioTracks.length > 1 || player.subtitleTracks.length > 0 ||
+    player.videoQualities.length > 1 || player.videoQuality !== 'auto';
 
   const loading = player.state === 'loading' || (player.state === 'idle' && !player.ended);
   const actionPosition = player.ended ? duration ?? player.position : player.position;
@@ -405,7 +407,7 @@ function PlayerSession({
                   {onPrev && <IconButton icon="previous" label="Previous video" compact onPress={onPrev} />}
                   {onNext && <IconButton icon="next" label="Next video" compact onPress={onNext} />}
                   {hasTrackSettings && (
-                    <IconButton icon="tracks" label="Audio and subtitles" compact onPress={() => setTrackSettingsOpen(true)} />
+                    <IconButton icon="tracks" label="Playback settings" compact onPress={() => setTrackSettingsOpen(true)} />
                   )}
                   {!Platform.isTV && <IconButton
                     icon={fillScreen ? 'fit' : 'fill'}
@@ -529,6 +531,10 @@ function PlayerSession({
           subtitleTrack={player.subtitleTrack}
           selectAudio={player.selectAudio}
           selectSubtitle={player.selectSubtitle}
+          videoQualities={player.videoQualities}
+          videoQuality={player.videoQuality}
+          videoSize={player.videoSize}
+          selectVideoQuality={player.selectVideoQuality}
           onClose={() => setTrackSettingsOpen(false)}
           onBack={hideControls}
         />

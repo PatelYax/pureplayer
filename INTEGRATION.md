@@ -49,6 +49,17 @@ npx.cmd expo run:android
 
 If the host manages `android` manually, apply equivalent native settings there and rebuild using the host's workflow. Don't use `prebuild --clean` over manual native changes. A Metro restart alone does not install native dependencies. If you see `[runtime not ready]: TypeError: property is not writable`, check for two React Native runtimes and merge the single-runtime resolver approach from [metro.config.js](./metro.config.js), using your host's project entry path. See the [README troubleshooting steps](./README.md#troubleshooting) for restarting Metro.
 
+### Optional: native video quality selection
+
+To offer **Auto** and manual resolutions from the same HLS or DASH manifest:
+
+1. Copy [patch-expo-video.cjs](./scripts/patch-expo-video.cjs) into `scripts\` and [PurePlayerVideoQuality.kt](./scripts/android-video-quality/PurePlayerVideoQuality.kt) into `scripts\android-video-quality\`.
+2. Pin `expo-video` to `58.0.14` in the host's `package.json`. The patch checks this version; review it before upgrading.
+3. Add `node scripts/patch-expo-video.cjs` to the host's `postinstall` script, preserving any existing steps. Merge `"expo-video"` into `expo.autolinking.android.buildFromSource` in `package.json` so Android compiles the patched source instead of using Expo's prebuilt library.
+4. Install dependencies, run the patch directly if install scripts are disabled (`node .\scripts\patch-expo-video.cjs`), and rebuild and reinstall the Android app. Expo Go and a Metro restart cannot add the native methods.
+
+The picker lists supported resolution heights reported by Media3; it does not invent qualities or transcode a source. The chosen height locks one track (the highest advertised bitrate when multiple supported tracks share that height). **Auto** clears the override and restores adaptive selection. Each new playback session starts in Auto. Without the patch, automatic quality and normal playback still work, but the manual picker is hidden.
+
 ## 3. Mount the player
 
 Put `SafeAreaProvider` around your app once. Render the player inside it on a screen with room to fill, then unmount it when leaving that screen. Example for `src\PlaybackScreen.tsx`:
@@ -236,6 +247,7 @@ function CustomPlaybackSession({ source }: { source: PlayerSource }) {
 | `setPlaybackRate(rate: number): void` | Sets playback speed (`1` is normal). Positive finite values are clamped to `0.1..16`. | `p.setPlaybackRate(1.25)` |
 | `selectAudio(track: AudioTrack): void` | Selects an Expo Video track object. Use one from the current source, not a language code, index, or track cached from another source. | `p.selectAudio(track)` |
 | `selectSubtitle(track: SubtitleTrack \| null): void` | Selects an Expo Video track object from the current source, or turns subtitles off. | `p.selectSubtitle(null)` |
+| `selectVideoQuality(quality: VideoQuality): Promise<void>` | Sets `'auto'` or a supported height in pixels for the current Android source. Rejects if the height is unavailable or the native patch is missing. Resolves after applying the preference, not after rendering at that resolution. | `await p.selectVideoQuality(720)` |
 | `getPlaybackSnapshot(): PlaybackSnapshot` | Reads `{ position, duration, ended }` without emitting an event. Position and duration use seconds; duration can be `null`. | `const snapshot = p.getPlaybackSnapshot()` |
 | `firstFrameRendered(): void` | Hook only. Wire to `VideoView.onFirstFrameRender` to forward the first-frame event. | `<VideoView player={p.engine} onFirstFrameRender={p.firstFrameRendered} />` |
 
@@ -248,6 +260,7 @@ For component calls, use `playerRef.current?.method(...)` after mount rather tha
 | `isPlaying`, `ended` | Booleans for active playback and end of video. |
 | `position`, `duration` | Position in seconds; duration is in seconds or `null` if unknown. |
 | `videoSize` | `{ width: number; height: number }` in pixels, or `null`. |
+| `videoQualities`, `videoQuality` | Available supported heights (`number[]`, highest first) and requested preference (`VideoQuality`, exported from `usePurePlayer.ts`: `'auto' \| number`). Use `videoSize` for the active dimensions. |
 | `volume` | Player volume from `0` to `1`. |
 | `muted`, `playbackRate` | Whether the player is muted, and its current playback speed. |
 | `audioTracks`, `subtitleTracks` | Available Expo Video `AudioTrack[]` and `SubtitleTrack[]`. |
@@ -278,6 +291,7 @@ Every `PlayerEvent` has a `type` and a numeric `sourceId` copied from `source.id
 | `bufferingChanged` | `isBuffering: boolean` | The engine enters or leaves the loading state. |
 | `durationChanged` | `duration: number \| null` | Source metadata loads; the duration is in seconds, or `null` if unavailable. |
 | `videoSizeChanged` | `width: number`, `height: number` | Valid dimensions are discovered or change, in pixels. |
+| `videoQualityChanged` | `quality: VideoQuality` | The native engine accepted a manual height or Auto. Automatic adaptation does not emit this event; monitor `videoSizeChanged` for active dimension changes. |
 | `progress` | `position: number`, `bufferedPosition: number \| null` | Time updates, configured for roughly 250 ms intervals. Both fields are positions in seconds, not percentages. |
 | `seekStarted` | `position: number` | A seek request is sent with the clamped target, in seconds. Previewing a seek does not emit this event. |
 | `resumeApplied` | `position: number` | The saved position was sent to the engine at startup. This does not confirm seek completion. Not emitted for `0` or an unusable position. |
@@ -324,6 +338,9 @@ export function handlePlayerEvent(event: PlayerEvent) {
       break;
     case 'videoSizeChanged':
       console.log(sourceId, event.width, event.height);
+      break;
+    case 'videoQualityChanged':
+      console.log(sourceId, event.quality);
       break;
     case 'progress':
       console.log(sourceId, event.position, event.bufferedPosition);

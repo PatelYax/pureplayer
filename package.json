@@ -4,9 +4,17 @@
   "private": true,
   "main": "index.ts",
   "scripts": {
+    "postinstall": "node scripts/patch-expo-video.cjs",
     "start": "expo start",
     "android": "expo run:android",
     "typecheck": "tsc --noEmit"
+  },
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": ["expo-video"]
+      }
+    }
   },
   "dependencies": {
     "@react-native-tvos/config-tv": "0.1.7",
@@ -15,7 +23,7 @@
     "expo-document-picker": "~58.0.5",
     "expo-navigation-bar": "~58.0.4",
     "expo-screen-orientation": "~58.0.4",
-    "expo-video": "~58.0.14",
+    "expo-video": "58.0.14",
     "react": "19.3.0",
     "react-native": "npm:react-native-tvos@0.88.1-0",
     "react-native-safe-area-context": "~5.11.1",

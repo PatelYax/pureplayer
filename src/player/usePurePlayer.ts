@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useState } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { useVideoPlayer, type AudioTrack, type SubtitleTrack } from 'expo-video';
 
 export type PlayerSource = {
@@ -22,6 +22,13 @@ export type PlaybackOptions = {
   autoPlay?: boolean;
 };
 
+export type VideoQuality = 'auto' | number;
+
+type AndroidQualityMethods = {
+  purePlayerGetVideoQualities?: () => Promise<number[]>;
+  purePlayerSetVideoQuality?: (height: number | null) => Promise<void>;
+};
+
 export type PlayerControls = {
   play: () => void;
   pause: () => void;
@@ -33,6 +40,7 @@ export type PlayerControls = {
   setPlaybackRate: (rate: number) => void;
   selectAudio: (track: AudioTrack) => void;
   selectSubtitle: (track: SubtitleTrack | null) => void;
+  selectVideoQuality: (quality: VideoQuality) => Promise<void>;
   getPlaybackSnapshot: () => PlaybackSnapshot;
 };
 
@@ -43,6 +51,7 @@ export type PlayerEvent = { sourceId: number } & (
   | { type: 'bufferingChanged'; isBuffering: boolean }
   | { type: 'durationChanged'; duration: number | null }
   | { type: 'videoSizeChanged'; width: number; height: number }
+  | { type: 'videoQualityChanged'; quality: VideoQuality }
   | { type: 'volumeChanged'; volume: number }
   | { type: 'mutedChanged'; muted: boolean }
   | { type: 'playbackRateChanged'; playbackRate: number }
@@ -73,7 +82,7 @@ export function usePurePlayer(
   onEvent?: (event: PlayerEvent) => void,
   options?: PlaybackOptions,
 ) {
-  const engine = useVideoPlayer(null, (player) => {
+  const engine: ReturnType<typeof useVideoPlayer> & AndroidQualityMethods = useVideoPlayer(null, (player) => {
     player.timeUpdateEventInterval = 0.25;
   });
   const [state, setState] = useState<PlaybackState>('idle');
@@ -82,6 +91,8 @@ export function usePurePlayer(
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState<number | null>(null);
   const [videoSize, setVideoSize] = useState<VideoSize | null>(null);
+  const [videoQualities, setVideoQualities] = useState<number[]>([]);
+  const [videoQuality, setVideoQuality] = useState<VideoQuality>('auto');
   const [volume, setVolume] = useState(() => engine.volume);
   const [muted, setMuted] = useState(() => engine.muted);
   const [playbackRate, setPlaybackRate] = useState(() => engine.playbackRate);
@@ -129,6 +140,21 @@ export function usePurePlayer(
     let replaced = false;
     let receivedMetadata = false;
     let started = false;
+    let qualityRequest = 0;
+    setVideoQualities([]);
+    setVideoQuality('auto');
+
+    function refreshVideoQualities() {
+      if (Platform.OS !== 'android' || !engine.purePlayerGetVideoQualities) return;
+      const request = ++qualityRequest;
+      engine.purePlayerGetVideoQualities().then((heights) => {
+        if (!active || request !== qualityRequest) return;
+        setVideoQualities((previous) =>
+          previous.length === heights.length && previous.every((height, index) => height === heights[index]) ? previous : heights);
+      }).catch((cause: unknown) => {
+        if (active && request === qualityRequest) console.warn('PurePlayer could not list video qualities.', cause);
+      });
+    }
 
     if (!Number.isFinite(initialPosition) || initialPosition < 0) {
       console.warn('PurePlayer initialPosition must be a non-negative, finite number of seconds.');
@@ -191,6 +217,7 @@ export function usePurePlayer(
         notify({ type: 'isPlayingChanged', isPlaying: playing });
       }),
       engine.addListener('sourceLoad', (event) => {
+        refreshVideoQualities();
         setAudioTracks(event.availableAudioTracks);
         setSubtitleTracks(event.availableSubtitleTracks);
         setAudioTrack(engine.audioTrack);
@@ -206,7 +233,10 @@ export function usePurePlayer(
         )?.size);
         startPlayback();
       }),
-      engine.addListener('videoTrackChange', ({ videoTrack }) => updateSize(videoTrack?.size)),
+      engine.addListener('videoTrackChange', ({ videoTrack }) => {
+        updateSize(videoTrack?.size);
+        refreshVideoQualities();
+      }),
       engine.addListener('availableAudioTracksChange', ({ availableAudioTracks }) => setAudioTracks(availableAudioTracks)),
       engine.addListener('availableSubtitleTracksChange', ({ availableSubtitleTracks }) => setSubtitleTracks(availableSubtitleTracks)),
       engine.addListener('audioTrackChange', ({ audioTrack: track }) => {
@@ -281,6 +311,17 @@ export function usePurePlayer(
   const commands: PlayerControls = {
     selectAudio: (track: AudioTrack) => { engine.audioTrack = track; },
     selectSubtitle: (track: SubtitleTrack | null) => { engine.subtitleTrack = track; },
+    async selectVideoQuality(quality) {
+      if (Platform.OS !== 'android' || !engine.purePlayerSetVideoQuality) {
+        throw new Error('Manual video quality requires a rebuilt Android app with the PurePlayer quality patch.');
+      }
+      if (quality !== 'auto' && (!Number.isInteger(quality) || quality <= 0 || !videoQualities.includes(quality))) {
+        throw new Error('Select one of the available video resolutions.');
+      }
+      await engine.purePlayerSetVideoQuality(quality === 'auto' ? null : quality);
+      setVideoQuality(quality);
+      onEvent?.({ type: 'videoQualityChanged', sourceId: source.id, quality });
+    },
     play: () => ended ? replay() : engine.play(),
     pause: () => {
       engine.pause();
@@ -309,7 +350,7 @@ export function usePurePlayer(
   };
 
   return {
-    engine, state, isPlaying, ended, position, duration, videoSize, volume, muted, playbackRate, error,
+    engine, state, isPlaying, ended, position, duration, videoSize, videoQualities, videoQuality, volume, muted, playbackRate, error,
     audioTracks, subtitleTracks, audioTrack, subtitleTrack,
     ...commands,
     firstFrameRendered() {

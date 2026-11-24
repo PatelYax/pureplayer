@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { AudioTrack, SubtitleTrack } from 'expo-video';
 import { colors } from '../theme';
+import type { PlayerControls, VideoQuality } from './usePurePlayer';
 
 type Props = {
   audioTracks: AudioTrack[];
@@ -10,6 +11,10 @@ type Props = {
   subtitleTrack: SubtitleTrack | null;
   selectAudio: (track: AudioTrack) => void;
   selectSubtitle: (track: SubtitleTrack | null) => void;
+  videoQualities: number[];
+  videoQuality: VideoQuality;
+  videoSize: { height: number } | null;
+  selectVideoQuality: PlayerControls['selectVideoQuality'];
   onClose: () => void;
   onBack: () => void;
 };
@@ -33,8 +38,26 @@ function Option({ label, onPress, selected, preferred = false }: {
   );
 }
 
-export function TrackSettings({ audioTracks, subtitleTracks, audioTrack, subtitleTrack, selectAudio, selectSubtitle, onClose, onBack }: Props) {
+export function TrackSettings({
+  audioTracks, subtitleTracks, audioTrack, subtitleTrack, selectAudio, selectSubtitle,
+  videoQualities, videoQuality, videoSize, selectVideoQuality, onClose, onBack,
+}: Props) {
   const [error, setError] = useState<string | null>(null);
+  const [changingQuality, setChangingQuality] = useState(false);
+
+  async function changeQuality(quality: VideoQuality) {
+    if (changingQuality || quality === videoQuality) return;
+    setChangingQuality(true);
+    setError(null);
+    try {
+      await selectVideoQuality(quality);
+    } catch (cause) {
+      console.warn('PurePlayer could not change video quality.', cause);
+      setError(cause instanceof Error ? cause.message : 'Could not change video quality.');
+    } finally {
+      setChangingQuality(false);
+    }
+  }
 
   async function openCaptionStyle() {
     setError(null);
@@ -50,8 +73,19 @@ export function TrackSettings({ audioTracks, subtitleTracks, audioTrack, subtitl
     <Modal transparent statusBarTranslucent navigationBarTranslucent onRequestClose={onBack}>
       <View style={styles.backdrop}>
         <View accessibilityViewIsModal style={styles.panel}>
-          <Text accessibilityRole="header" style={styles.heading}>Audio &amp; Subtitles</Text>
+          <Text accessibilityRole="header" style={styles.heading}>Playback settings</Text>
           <ScrollView>
+            {(videoQualities.length > 1 || videoQuality !== 'auto') && (
+              <>
+                <Text accessibilityRole="header" style={styles.section}>Video quality</Text>
+                <Option label={videoQuality === 'auto' && videoSize ? `Auto (${videoSize.height}p)` : 'Auto'}
+                  selected={videoQuality === 'auto'} onPress={() => changeQuality('auto')} />
+                {videoQualities.map((height) => (
+                  <Option key={height} label={`${height}p`} selected={videoQuality === height}
+                    onPress={() => changeQuality(height)} />
+                ))}
+              </>
+            )}
             {audioTracks.length > 1 && (
               <>
                 <Text accessibilityRole="header" style={styles.section}>Audio</Text>
