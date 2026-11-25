@@ -128,6 +128,7 @@ Use a stable numeric `source.id` for the current video and a new ID when switchi
 | `initialPosition`, `autoPlay` | Optional saved position in seconds and whether playback starts automatically (default `true`). |
 | `ref` | Optional React ref for `PlayerControls` methods. |
 | `onEvent` | Receives typed playback events even when the built-in controls are hidden. |
+| `onSaveProgress` | `(payload: SaveProgressPayload) => void`. Comprehensive callback for Continue Watching. Automatically fires with `{ position, duration, ended, reason }` when the user presses Back, exits via in-app button, minimizes the app (Home / Recent Apps), pauses, playback ends, periodically during playback, or when the player unmounts. |
 | `controls` | Defaults to `true`. Pass `false` to hide the built-in playback UI and gestures. |
 | `autoRotate` | Defaults to `false` on the component; the standalone app enables it. When enabled, playback follows the video dimensions once available. Square video releases the orientation lock. Ignored on TV. |
 | `initialOrientation` | `'landscape'` (default) or `'portrait'`. With `autoRotate` off, playback stays in this orientation. Ignored on TV. |

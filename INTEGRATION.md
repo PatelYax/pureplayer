@@ -169,7 +169,36 @@ These are notification or command callbacks: PurePlayer does not use or await th
 
 ## Continue Watching, Skip Intro, and Next Episode
 
-Load the saved position **before mounting the player**. Store progress in PurePlay per profile and episode, not by the temporary player session ID. Use `checkpoint` to save on pause, background, or confirmed exit; use the ended checkpoint to mark the episode complete. Optionally throttle `progress` events for periodic saves in case the app is killed. If your app removes the screen directly (without player Back), call `getPlaybackSnapshot()` before unmounting. PurePlayer does not store progress or choose the next episode.
+Load the saved position **before mounting the player**. Store progress in PurePlay per profile and episode, not by the temporary player session ID. 
+
+### The `onSaveProgress` Prop (Recommended for Continue Watching)
+
+PurePlayer provides an all-in-one `onSaveProgress` prop that automatically fires in all exit and lifecycle scenarios:
+- **In-App Back / Exit button** pressed
+- **Android Hardware Back button** pressed
+- **App minimized / Backgrounded** (user presses device Home button or opens the Recent Apps switcher via `AppState`)
+- **Pause** or when playback reaches the end
+- **Periodic** progress checkpoints (every 10 seconds during active playback)
+- **Component unmount**
+
+```tsx
+<PurePlayer
+  ref={playerRef}
+  source={source}
+  initialPosition={savedPosition ?? 0}
+  onExit={goBack}
+  onSaveProgress={({ position, duration, ended, reason }) => {
+    // reason: 'exit' | 'back' | 'background' | 'pause' | 'periodic' | 'unmount' | 'ended'
+    saveWatchProgress(episodeId, position, duration, ended);
+  }}
+  timedActions={[
+    { id: 'recap', label: 'Skip Recap', start: 5, end: 30, onPress: (player) => player.seekTo(30) },
+    { id: 'intro', label: 'Skip Intro', start: 30, end: 75, onPress: (player) => player.seekTo(75) },
+  ]}
+/>
+```
+
+The older manual `onEvent` checkpoint approach still works as well.
 
 The following example assumes `source`, `savedPosition`, `episodeId`, `hasNextEpisode`, `goBack`, `saveWatchProgress`, and `openNextEpisode` come from your app:
 

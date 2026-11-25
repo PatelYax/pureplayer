@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import { VideoView } from 'expo-video';
 import { CastButton } from 'react-native-google-cast';
-import { ActivityIndicator, Animated, BackHandler, Dimensions, Easing, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View, type GestureResponderEvent } from 'react-native';
+import { ActivityIndicator, Animated, AppState, BackHandler, Dimensions, Easing, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View, type AppStateStatus, type GestureResponderEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { usePurePlayer, type PlaybackOptions, type PlayerControls, type PlayerEvent, type PlayerSource } from './usePurePlayer';
@@ -108,6 +108,8 @@ export function SkipTimedButton({
     onDismiss();
   }
 
+  const [isFocused, setIsFocused] = useState(false);
+
   const fillWidth = useMemo(
     () =>
       progressAnim.interpolate({
@@ -118,28 +120,42 @@ export function SkipTimedButton({
   );
 
   return (
-    <Animated.View style={{ opacity: fadeAnim }}>
+    <Animated.View
+      style={[
+        styles.skipButtonWrapper,
+        isFocused && styles.skipButtonWrapperFocused,
+        { opacity: fadeAnim },
+      ]}
+    >
+      {/* Subtle modern glass accent wash */}
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.skipProgressFill, { width: fillWidth }]}
+      />
+
+      {/* Sleek bottom progress indicator bar */}
+      <View pointerEvents="none" style={styles.skipProgressBarTrack}>
+        <Animated.View
+          style={[styles.skipProgressBarIndicator, { width: fillWidth }]}
+        />
+      </View>
+
       <Pressable
         accessibilityRole="button"
         hasTVPreferredFocus={Platform.isTV && preferredFocus}
         onPress={handlePress}
-        style={({ focused, pressed }) => [
-          styles.skipButton,
-          focused && styles.skipButtonFocused,
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
+        style={({ pressed }) => [
+          styles.skipButtonPressable,
           pressed && styles.skipButtonPressed,
         ]}
       >
-        {/* Clean, authentic Netflix background fill */}
-        <Animated.View
-          pointerEvents="none"
-          style={[styles.skipProgressFill, { width: fillWidth }]}
-        />
-
         {/* Content: Label + Skip Icon */}
         <View style={styles.skipContent}>
           <Text style={styles.skipLabel}>{label}</Text>
           <Svg accessible={false} width={14} height={14} viewBox="0 0 24 24">
-            <Path d="M5 5l10 7-10 7V5zm12 0v14h2V5h-2z" fill="#FFFFFF" />
+            <Path d="M5 5l10 7-10 7V5zm12 0v14h2V5h-2z" fill={colors.text} />
           </Svg>
         </View>
       </Pressable>
@@ -283,10 +299,28 @@ export type TimedPlayerAction = {
   | { start?: never; secondsBeforeEnd: number }
 );
 
+export type SaveProgressReason = 'exit' | 'back' | 'background' | 'pause' | 'periodic' | 'unmount' | 'ended';
+
+export interface SaveProgressPayload {
+  position: number;
+  duration: number | null;
+  ended: boolean;
+  reason: SaveProgressReason;
+}
+
 export type PurePlayerProps = BackNavigation & PlaybackOptions & {
   source: PlayerSource;
   ref?: Ref<PlayerControls>;
   onEvent?: (event: PlayerEvent) => void;
+  /**
+   * Automatically triggered to handle continue watching:
+   * - When exiting via in-app back/exit button
+   * - When pressing Android hardware back button
+   * - When app goes to background / recent apps / home button
+   * - When paused or playback ends
+   * - When PurePlayer unmounts
+   */
+  onSaveProgress?: (payload: SaveProgressPayload) => void;
   controls?: boolean;
   autoRotate?: boolean;
   initialOrientation?: PlaybackOrientation;
@@ -311,11 +345,25 @@ export function PurePlayer({
 }
 
 function PlayerSession({
-  source, onEvent, controls = true, autoRotate = false, initialOrientation, lockedOrientation,
+  source, onEvent, onSaveProgress, controls = true, autoRotate = false, initialOrientation, lockedOrientation,
   onExit, onBack, onClose, backRoute, navigate, onNext, onPrev, skipIntro, timedActions,
   ref, initialPosition, autoPlay, title, subtitle, pauseMetadata,
 }: PurePlayerProps) {
-  const player = usePurePlayer(source, onEvent, { initialPosition, autoPlay });
+  const onSaveProgressEvent = useEffectEvent((payload: SaveProgressPayload) => {
+    onSaveProgress?.(payload);
+  });
+
+  const player = usePurePlayer(source, (event) => {
+    onEvent?.(event);
+    if (event.type === 'checkpoint') {
+      onSaveProgressEvent({
+        position: event.position,
+        duration: event.duration,
+        ended: event.ended,
+        reason: event.ended ? 'ended' : (event.reason as SaveProgressReason) || 'pause',
+      });
+    }
+  }, { initialPosition, autoPlay });
   const screen = Dimensions.get('screen');
   const cast = usePlaybackCast(
     controls && Platform.OS === 'android' && !Platform.isTV && Math.min(screen.width, screen.height) < 600 &&
@@ -450,6 +498,47 @@ function PlayerSession({
     if (activeAction) setDismissedAction(activeAction.id);
   }
 
+  const lastProgressSaveRef = useRef(0);
+  const triggerSaveProgress = useEffectEvent((reason: SaveProgressReason) => {
+    if (cast.casting) return;
+    const snapshot = player.getPlaybackSnapshot();
+    onSaveProgressEvent({
+      position: snapshot.position,
+      duration: snapshot.duration,
+      ended: snapshot.ended,
+      reason,
+    });
+    lastProgressSaveRef.current = Date.now();
+  });
+
+  // 1. AppState listener: Home button, Recent Apps switcher, or incoming call
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        triggerSaveProgress('background');
+      }
+    });
+    return () => subscription.remove();
+  }, []);
+
+  // 2. Unmount cleanup: when player component unmounts from tree
+  useEffect(() => {
+    return () => {
+      triggerSaveProgress('unmount');
+    };
+  }, []);
+
+  // 3. Periodic progress checkpoint every 10s during active playback
+  useEffect(() => {
+    if (!player.isPlaying) return;
+    const interval = setInterval(() => {
+      if (Date.now() - lastProgressSaveRef.current >= 10000) {
+        triggerSaveProgress('periodic');
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [player.isPlaying]);
+
   const handleHardwareBack = useEffectEvent(() => {
     if (showPauseDetails) {
       dismissPauseDetails();
@@ -463,11 +552,19 @@ function PlayerSession({
     if (!cast.casting) {
       const snapshot = player.getPlaybackSnapshot();
       if (snapshot.duration !== null) onEvent?.({ type: 'checkpoint', sourceId: source.id, reason: 'exit', ...snapshot });
+      triggerSaveProgress('back');
     }
     const exit = onExit ?? (backRoute !== undefined ? () => navigate(backRoute) : onBack ?? onClose);
     if (!exit) return false;
     exit();
     return true;
+  });
+
+  const handleExplicitBack = useEffectEvent(() => {
+    triggerSaveProgress('exit');
+    const exit = onBack ?? onExit ?? onClose ?? (backRoute !== undefined ? () => navigate(backRoute) : undefined);
+    if (exit) exit();
+    else hideControls();
   });
 
   useEffect(() => {
@@ -577,7 +674,7 @@ function PlayerSession({
               <View pointerEvents="box-none" style={[styles.top, {
                 top: insets.top + edge, left: insets.left + edge, right: insets.right + edge,
               }]}>
-                <IconButton icon="backArrow" label="Hide playback controls" compact onPress={hideControls} />
+                <IconButton icon="backArrow" label="Back" compact onPress={handleExplicitBack} />
                 {(!!title || !!subtitle) && (
                   <View style={styles.headerCopy}>
                     {!!title && <Text accessibilityRole="header" numberOfLines={1} style={styles.headerTitle}>{title}</Text>}
@@ -798,31 +895,34 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
     backgroundColor: colors.primary,
   },
-  skipButton: {
-    minHeight: Platform.isTV ? 48 : 40,
-    paddingHorizontal: 18,
-    paddingVertical: 9,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.75)',
-    backgroundColor: 'rgba(10, 10, 10, 0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
+  skipButtonWrapper: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.22)',
+    backgroundColor: 'rgba(15, 15, 18, 0.78)',
     overflow: 'hidden',
     position: 'relative',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.5,
-    shadowRadius: 8,
+    shadowRadius: 10,
     elevation: 8,
   },
-  skipButtonFocused: {
-    borderColor: '#38BDF8',
-    backgroundColor: 'rgba(56, 189, 248, 0.3)',
+  skipButtonWrapperFocused: {
+    borderColor: colors.accent,
+    backgroundColor: colors.selected,
     transform: [{ scale: 1.05 }],
   },
+  skipButtonPressable: {
+    minHeight: Platform.isTV ? 48 : 40,
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
   skipButtonPressed: {
-    opacity: 0.8,
+    opacity: 0.85,
     transform: [{ scale: 0.98 }],
   },
   skipProgressFill: {
@@ -830,7 +930,20 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
-    backgroundColor: 'rgba(56, 189, 248, 0.35)',
+    backgroundColor: colors.accent,
+    opacity: 0.22,
+  },
+  skipProgressBarTrack: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  skipProgressBarIndicator: {
+    height: '100%',
+    backgroundColor: colors.accent,
   },
   skipContent: {
     flexDirection: 'row',
@@ -840,7 +953,7 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   skipLabel: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontFamily: fonts.bold,
     fontSize: Platform.isTV ? 16 : 14,
     letterSpacing: 0.4,
