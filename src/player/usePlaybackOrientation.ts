@@ -23,11 +23,11 @@ export function usePlaybackOrientation(
   }
 
   useEffect(() => {
-    if (!canRotate) return;
+    if (!canRotate || lockedOrientation) return;
     return () => {
       unlockAsync().catch((error: unknown) => console.warn('PurePlayer could not restore screen orientation.', error));
     };
-  }, [canRotate]);
+  }, [canRotate, lockedOrientation]);
 
   useEffect(() => {
     if (!canRotate) return;

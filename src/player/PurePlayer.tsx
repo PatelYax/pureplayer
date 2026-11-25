@@ -1,19 +1,20 @@
-import { useEffect, useEffectEvent, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import { VideoView } from 'expo-video';
-import { CastButton } from 'react-native-google-cast';
+import { useEffect, useEffectEvent, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import { ActivityIndicator, Animated, AppState, BackHandler, Dimensions, Easing, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View, type AppStateStatus, type GestureResponderEvent, type ImageSourcePropType } from 'react-native';
+import { CastButton } from 'react-native-google-cast';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
-import { usePurePlayer, type PlaybackOptions, type PlayerControls, type PlayerEvent, type PlayerSource } from './usePurePlayer';
-import { usePlaybackOrientation, type PlaybackOrientation } from './usePlaybackOrientation';
+import { colors, fonts } from '../theme';
+import { PauseDetails, type PauseMetadata } from './PauseDetails';
+import { TrackSettings, type TrackSettingsMode } from './TrackSettings';
 import { usePlaybackBrightness } from './usePlaybackBrightness';
 import { usePlaybackCast } from './usePlaybackCast';
+import { usePlaybackOrientation, type PlaybackOrientation } from './usePlaybackOrientation';
+import { usePurePlayer, type PlaybackOptions, type PlayerControls, type PlayerEvent, type PlayerSource } from './usePurePlayer';
 import { useSeekGestures } from './useSeekGestures';
-import { TrackSettings, type TrackSettingsMode } from './TrackSettings';
-import { PauseDetails, type PauseMetadata } from './PauseDetails';
-import { colors, fonts } from '../theme';
 
 export type { PauseMetadata } from './PauseDetails';
+export type { PreferredTracks } from './usePurePlayer';
 
 export function PlayerButton({
   label, onPress, disabled = false, preferredFocus = false, secondary = false,
@@ -295,9 +296,9 @@ export type TimedPlayerAction = {
   end?: number;
   onPress: (player: PlayerControls) => void;
 } & (
-  | { start: number; secondsBeforeEnd?: never }
-  | { start?: never; secondsBeforeEnd: number }
-);
+    | { start: number; secondsBeforeEnd?: never }
+    | { start?: never; secondsBeforeEnd: number }
+  );
 
 export type SaveProgressReason = 'exit' | 'back' | 'background' | 'pause' | 'periodic' | 'unmount' | 'ended';
 
@@ -357,7 +358,7 @@ export function PurePlayer({
 function PlayerSession({
   source, onEvent, onSaveProgress, controls = true, autoRotate = false, initialOrientation, lockedOrientation,
   onExit, onBack, onClose, backRoute, navigate, onNext, onPrev, skipIntro, timedActions,
-  ref, initialPosition, autoPlay, title, subtitle, pauseMetadata, poster, showPosterAccentBar = true,
+  ref, initialPosition, autoPlay, preferredTracks, onTracksChanged, title, subtitle, pauseMetadata, poster, showPosterAccentBar = true,
 }: PurePlayerProps) {
   const [startedSourceId, setStartedSourceId] = useState<number | null>(null);
   const hasStarted = startedSourceId === source.id;
@@ -375,11 +376,11 @@ function PlayerSession({
         reason: event.ended ? 'ended' : (event.reason as SaveProgressReason) || 'pause',
       });
     }
-  }, { initialPosition, autoPlay });
+  }, { initialPosition, autoPlay, preferredTracks, onTracksChanged });
   const screen = Dimensions.get('screen');
   const cast = usePlaybackCast(
     controls && Platform.OS === 'android' && !Platform.isTV && Math.min(screen.width, screen.height) < 600 &&
-      /^https?:\/\//i.test(source.uri),
+    /^https?:\/\//i.test(source.uri),
     source, () => player.getPlaybackSnapshot().position, player.pause, title, subtitle,
   );
   const playerControls: PlayerControls = {
@@ -534,13 +535,13 @@ function PlayerSession({
 
   useEffect(() => {
     if (!canShowPauseDetails) {
-      setPauseDetailsVisible(false);
-      return;
+      const timer = setTimeout(() => setPauseDetailsVisible(false), 0);
+      return () => clearTimeout(timer);
     }
     if (timelinePreview !== null || gestures.preview !== null) return;
     const timer = setTimeout(() => setPauseDetailsVisible(true), pauseDetailsDelayMs);
     return () => clearTimeout(timer);
-  }, [canShowPauseDetails, pauseActivity, timelinePreview !== null, gestures.preview !== null]);
+  }, [canShowPauseDetails, pauseActivity, timelinePreview, gestures.preview]);
 
   function dismissPauseDetails() {
     setPauseDetailsVisible(false);
@@ -800,10 +801,10 @@ function PlayerSession({
                   <Svg width="100%" height="100%">
                     <Defs>
                       <LinearGradient id="playerShade" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <Stop offset="0%" stopColor="#030710" stopOpacity={0.7} />
-                        <Stop offset="28%" stopColor="#030710" stopOpacity={0} />
-                        <Stop offset="68%" stopColor="#030710" stopOpacity={0} />
-                        <Stop offset="100%" stopColor="#030710" stopOpacity={0.88} />
+                        <Stop offset="0%" stopColor="#000000" stopOpacity={0.75} />
+                        <Stop offset="28%" stopColor="#000000" stopOpacity={0} />
+                        <Stop offset="68%" stopColor="#000000" stopOpacity={0} />
+                        <Stop offset="100%" stopColor="#000000" stopOpacity={0.9} />
                       </LinearGradient>
                     </Defs>
                     <Rect width="100%" height="100%" fill="url(#playerShade)" />
@@ -861,52 +862,52 @@ function PlayerSession({
             </View>
           )}
           {!cast.casting && !isPosterLoading && (showControls || tvSeekPreview !== null) && (
-              <View pointerEvents={Platform.isTV && !showControls ? 'none' : 'auto'} style={[styles.timeline, { bottom: insets.bottom + edge, left: insets.left + edge, right: insets.right + edge }]}>
-                {brightness.error && <Text accessibilityRole="alert" style={styles.error}>{brightness.error}</Text>}
-                {duration !== null && (
-                  <View
-                    accessible={!Platform.isTV}
-                    accessibilityRole={Platform.isTV ? undefined : 'adjustable'}
-                    accessibilityState={{ disabled: seekDisabled }}
-                    accessibilityLabel="Playback position"
-                    accessibilityValue={{ min: 0, max: 100, now: Math.round(progress), text: formatTime(displayedPosition, showHours) }}
-                    accessibilityActions={Platform.isTV ? undefined : [{ name: 'increment' }, { name: 'decrement' }]}
-                    onAccessibilityAction={({ nativeEvent }) => {
-                      if (nativeEvent.actionName === 'increment') player.seekTo(player.position + 10);
-                      if (nativeEvent.actionName === 'decrement') player.seekTo(player.position - 10);
-                    }}
-                    onLayout={({ nativeEvent }) => setTimelineWidth(nativeEvent.layout.width)}
-                    onStartShouldSetResponder={() => !Platform.isTV && !seekDisabled && timelineWidth > 0}
-                    onResponderGrant={({ nativeEvent: { pageX, locationX } }) => {
-                      gestures.cancelSeek();
-                      scrubStart.current = { pageX, localX: locationX };
-                      setScrubPosition(scrubTime(locationX));
-                    }}
-                    onResponderMove={({ nativeEvent }) => updateScrub(nativeEvent.pageX)}
-                    onResponderRelease={({ nativeEvent }) => updateScrub(nativeEvent.pageX, true)}
-                    onResponderTerminate={() => {
-                      scrubStart.current = null;
-                      setScrubPosition(null);
-                    }}
-                    style={styles.seekTarget}
-                  >
-                    <View pointerEvents="none" style={styles.track}>
-                      <View style={[styles.fill, { width: `${progress}%` }]} />
-                    </View>
-                    {timelinePreview !== null && timelineWidth > 0 && (
-                      <View pointerEvents="none" style={[styles.scrubLabel, {
-                        left: Math.max(0, Math.min(timelineWidth - scrubLabelWidth, timelineWidth * progress / 100 - scrubLabelWidth / 2)),
-                      }]}>
-                        <Text style={styles.scrubTime}>{formatTime(timelinePreview, showHours || timelinePreview >= 3600)}</Text>
-                      </View>
-                    )}
+            <View pointerEvents={Platform.isTV && !showControls ? 'none' : 'auto'} style={[styles.timeline, { bottom: insets.bottom + edge, left: insets.left + edge, right: insets.right + edge }]}>
+              {brightness.error && <Text accessibilityRole="alert" style={styles.error}>{brightness.error}</Text>}
+              {duration !== null && (
+                <View
+                  accessible={!Platform.isTV}
+                  accessibilityRole={Platform.isTV ? undefined : 'adjustable'}
+                  accessibilityState={{ disabled: seekDisabled }}
+                  accessibilityLabel="Playback position"
+                  accessibilityValue={{ min: 0, max: 100, now: Math.round(progress), text: formatTime(displayedPosition, showHours) }}
+                  accessibilityActions={Platform.isTV ? undefined : [{ name: 'increment' }, { name: 'decrement' }]}
+                  onAccessibilityAction={({ nativeEvent }) => {
+                    if (nativeEvent.actionName === 'increment') player.seekTo(player.position + 10);
+                    if (nativeEvent.actionName === 'decrement') player.seekTo(player.position - 10);
+                  }}
+                  onLayout={({ nativeEvent }) => setTimelineWidth(nativeEvent.layout.width)}
+                  onStartShouldSetResponder={() => !Platform.isTV && !seekDisabled && timelineWidth > 0}
+                  onResponderGrant={({ nativeEvent: { pageX, locationX } }) => {
+                    gestures.cancelSeek();
+                    scrubStart.current = { pageX, localX: locationX };
+                    setScrubPosition(scrubTime(locationX));
+                  }}
+                  onResponderMove={({ nativeEvent }) => updateScrub(nativeEvent.pageX)}
+                  onResponderRelease={({ nativeEvent }) => updateScrub(nativeEvent.pageX, true)}
+                  onResponderTerminate={() => {
+                    scrubStart.current = null;
+                    setScrubPosition(null);
+                  }}
+                  style={styles.seekTarget}
+                >
+                  <View pointerEvents="none" style={styles.track}>
+                    <View style={[styles.fill, { width: `${progress}%` }]} />
                   </View>
-                )}
-                <View style={styles.times}>
-                  <Text style={styles.time}>{formatTime(displayedPosition, showHours)}</Text>
-                  <Text style={styles.time}>{duration === null ? '--:--' : formatTime(duration, showHours)}</Text>
+                  {timelinePreview !== null && timelineWidth > 0 && (
+                    <View pointerEvents="none" style={[styles.scrubLabel, {
+                      left: Math.max(0, Math.min(timelineWidth - scrubLabelWidth, timelineWidth * progress / 100 - scrubLabelWidth / 2)),
+                    }]}>
+                      <Text style={styles.scrubTime}>{formatTime(timelinePreview, showHours || timelinePreview >= 3600)}</Text>
+                    </View>
+                  )}
                 </View>
+              )}
+              <View style={styles.times}>
+                <Text style={styles.time}>{formatTime(displayedPosition, showHours)}</Text>
+                <Text style={styles.time}>{duration === null ? '--:--' : formatTime(duration, showHours)}</Text>
               </View>
+            </View>
           )}
           {!cast.casting && (showAction || showIntroProp) && activeSegmentId !== null && (
             <View style={[styles.intro, {
@@ -983,8 +984,10 @@ function PlayerSession({
 }
 
 const styles = StyleSheet.create({
-  castError: { position: 'absolute', alignSelf: 'center', maxWidth: '85%', padding: 8,
-    backgroundColor: colors.surface, color: colors.error, fontFamily: fonts.regular, textAlign: 'center' },
+  castError: {
+    position: 'absolute', alignSelf: 'center', maxWidth: '85%', padding: 8,
+    backgroundColor: colors.surface, color: colors.error, fontFamily: fonts.regular, textAlign: 'center'
+  },
   player: { flex: 1, backgroundColor: '#000' },
   video: { flex: 1, width: '100%' },
   overlay: { ...StyleSheet.absoluteFill },
@@ -1004,7 +1007,7 @@ const styles = StyleSheet.create({
   seekTarget: { minHeight: 34, justifyContent: 'center' },
   scrubLabel: {
     position: 'absolute', bottom: '100%', width: scrubLabelWidth, alignItems: 'center',
-    paddingVertical: 5, borderRadius: 6, backgroundColor: '#0A1220E8',
+    paddingVertical: 5, borderRadius: 8, backgroundColor: '#0A0A0AF0', borderWidth: 1, borderColor: colors.border,
   },
   scrubTime: { color: colors.text, fontSize: 14, fontFamily: fonts.bold, fontVariant: ['tabular-nums'] },
   seekFeedback: { position: 'absolute', top: 0, bottom: 0, width: '50%', justifyContent: 'center', alignItems: 'center', gap: 4 },

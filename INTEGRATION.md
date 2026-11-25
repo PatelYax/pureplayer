@@ -125,6 +125,8 @@ export function PlaybackScreen({ source, goBack }: Props) {
 | `timedActions` | `readonly TimedPlayerAction[]` | Custom playback buttons, such as Skip Recap, Skip Intro, or Next Episode. Each has a label, timing, and a callback that receives `PlayerControls`. |
 | `title`, `subtitle` | `string` | Optional heading and secondary line beside the back arrow while playback controls are visible. |
 | `pauseMetadata` | `PauseMetadata` | Optional `name`, `image`, `detailLine`, and `description` for the animated paused screen. Omit the prop to disable it. |
+| `preferredTracks` | `PreferredTracks` | `{ audioLanguage?: string; subtitleLanguage?: string; quality?: string }`. Automatically selects matching audio, subtitle, and resolution tracks on source load. Supports ISO-639 codes (e.g. `hin`, `en`, `es`) or localized names (`Hindi`, `English`). |
+| `onTracksChanged` | `(tracks: { audioLanguage?: string; subtitleLanguage?: string; quality?: string }) => void` | Invoked when the user manually changes audio track, subtitle track, or resolution in Track Settings. Persist to global app settings or Continue Watching metadata. |
 | `poster` | `string \| ImageSourcePropType` | Optional backdrop image (URI or local require source) shown during initial load instead of the circular spinner. Completely overlays the video surface and hides player controls/timeline until the first frame renders. |
 | `showPosterAccentBar` | `boolean` | Defaults to `true`. Pass `false` to hide the vertical blue accent line next to the poster title on the loading screen. |
 
@@ -276,6 +278,52 @@ Import `TimedPlayerAction` from [PurePlayer.tsx](./src/player/PurePlayer.tsx) wh
 | `onPress` | `(player: PlayerControls) => void` | Command or navigation callback; the player does not auto-run it when entering the window. |
 
 The first matching action wins if windows overlap, so order them by priority. A timed action can show with the playback overlay hidden, but not with `controls={false}`. Pressing it or Back dismisses it while it remains the matching action. Windows follow the actual playback position, not wall-clock time or seek previews. The older `skipIntro` prop still works; a matching custom action takes priority.
+
+## Track Preferences & Auto-Selection (Audio, Subtitles & Quality)
+
+PurePlayer supports Netflix-style automatic track selection on stream startup, as well as two-way persistence between the player and host application.
+
+### `preferredTracks` Prop
+
+Pass `preferredTracks` to automatically select matching tracks when the stream loads and audio/subtitle tracks become available:
+
+```tsx
+<PurePlayer
+  source={source}
+  preferredTracks={{
+    audioLanguage: 'hin',        // or 'Hindi', 'en', 'Japanese', etc.
+    subtitleLanguage: 'English',  // or 'en', 'hin', 'off'
+    quality: '1080p',            // or '720p', '4k', 'Auto'
+  }}
+  onTracksChanged={(tracks) => {
+    // Save to global user settings and per-title Continue Watching entry
+    console.log('User changed tracks:', tracks);
+  }}
+/>
+```
+
+### Language Normalization
+
+PurePlayer automatically maps between 2-letter ISO-639-1 codes (`hi`, `en`, `ja`, `es`), 3-letter ISO-639-2 codes (`hin`, `eng`, `jpn`, `spa`), and standard English display names (`Hindi`, `English`, `Japanese`, `Spanish`). You can pass either the code or display name in `preferredTracks`:
+- `'hin'` matches `'Hindi'`, `'hin'`, and `'hi'`
+- `'English'` matches `'en'`, `'eng'`, and `'English'`
+- Matching is case-insensitive and trims whitespace.
+
+### Track Change Callbacks (`onTracksChanged`)
+
+Whenever the user opens Track Settings and selects an audio track, subtitle track, or resolution preset, PurePlayer emits `onTracksChanged`:
+
+```ts
+onTracksChanged({
+  audioLanguage: 'Hindi',
+  subtitleLanguage: 'English',
+  quality: '1080p',
+})
+```
+
+Use this callback to:
+1. **Global App Preferences (Netflix-style):** Save the preferred audio and subtitle languages in your app settings (e.g., AsyncStorage or SQLite) so all future movies and episodes automatically default to the user's preferred language.
+2. **Per-Title Continue Watching:** Store the chosen audio, subtitle, and quality settings directly on the watch history record so resuming a specific title restores the exact tracks the user had selected.
 
 ## Playback methods and state
 

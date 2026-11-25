@@ -78,8 +78,8 @@ const styles = StyleSheet.create({
   overlay: { ...StyleSheet.absoluteFill, zIndex: 5, overflow: 'hidden' },
   content: { position: 'absolute', maxWidth: 680, gap: 7 },
   landscapeContent: { width: '55%' },
-  artwork: { width: Platform.isTV ? 186 : 136, height: Platform.isTV ? 88 : 62 },
+  artwork: { width: Platform.isTV ? 200 : 150, height: Platform.isTV ? 112 : 84, borderRadius: 10, borderWidth: 1, borderColor: colors.border },
   name: { color: colors.text, fontFamily: fonts.bold, fontSize: Platform.isTV ? 36 : 24 },
-  details: { color: colors.text, fontFamily: fonts.regular, fontSize: Platform.isTV ? 18 : 14 },
+  details: { color: colors.accent, fontFamily: fonts.bold, fontSize: Platform.isTV ? 18 : 14 },
   description: { color: colors.muted, fontFamily: fonts.regular, fontSize: Platform.isTV ? 19 : 15, lineHeight: Platform.isTV ? 26 : 20 },
 });

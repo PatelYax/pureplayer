@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/immutability, react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import { useVideoPlayer, type AudioTrack, type SubtitleTrack } from 'expo-video';
@@ -6,6 +7,7 @@ export type PlayerSource = {
   id: number;
   uri: string;
   format?: 'hls' | 'dash' | 'auto';
+  headers?: Record<string, string>;
 };
 
 type PlaybackState = 'idle' | 'loading' | 'ready' | 'error';
@@ -17,9 +19,21 @@ export type PlaybackSnapshot = {
   ended: boolean;
 };
 
+export type PreferredTracks = {
+  audioLanguage?: string | null;
+  subtitleLanguage?: string | null;
+  quality?: VideoQuality | string | null;
+};
+
 export type PlaybackOptions = {
   initialPosition?: number;
   autoPlay?: boolean;
+  preferredTracks?: PreferredTracks;
+  onTracksChanged?: (selected: {
+    audioLanguage?: string;
+    subtitleLanguage?: string | null;
+    quality?: VideoQuality;
+  }) => void;
 };
 
 export type VideoQuality = 'auto' | number;
@@ -68,6 +82,30 @@ export type PlayerEvent = { sourceId: number } & (
 type EventPayload = PlayerEvent extends infer Event
   ? Event extends PlayerEvent ? Omit<Event, 'sourceId'> : never
   : never;
+
+function matchesLanguage(track: AudioTrack | SubtitleTrack, targetLang?: string | null): boolean {
+  if (!targetLang || !track) return false;
+  const target = targetLang.trim().toLowerCase();
+  if (!target) return false;
+
+  const trackLang = (track.language ?? '').toLowerCase();
+  const trackLabel = (track.label ?? '').toLowerCase();
+  const trackName = ((track as any).name ?? '').toLowerCase();
+
+  return (
+    trackLang === target ||
+    trackLang.startsWith(target) ||
+    target.startsWith(trackLang) ||
+    trackLabel.includes(target) ||
+    trackName.includes(target) ||
+    (target === 'hin' && (trackLang === 'hi' || trackLabel.includes('hindi') || trackName.includes('hindi'))) ||
+    (target === 'hindi' && (trackLang === 'hi' || trackLang === 'hin')) ||
+    (target === 'eng' && (trackLang === 'en' || trackLabel.includes('english') || trackName.includes('english'))) ||
+    (target === 'english' && (trackLang === 'en' || trackLang === 'eng')) ||
+    (target === 'jpn' && (trackLang === 'ja' || trackLabel.includes('japanese') || trackName.includes('japanese'))) ||
+    (target === 'japanese' && (trackLang === 'ja' || trackLang === 'jpn'))
+  );
+}
 
 const playbackStates = {
   idle: 'idle',
@@ -228,6 +266,42 @@ export function usePurePlayer(
         refreshVideoQualities();
         setAudioTracks(event.availableAudioTracks);
         setSubtitleTracks(event.availableSubtitleTracks);
+
+        // Auto-select preferred audio if requested
+        if (options?.preferredTracks?.audioLanguage) {
+          const matchedAudio = event.availableAudioTracks.find((t) =>
+            matchesLanguage(t, options.preferredTracks?.audioLanguage),
+          );
+          if (matchedAudio && matchedAudio.id !== engine.audioTrack?.id) {
+            engine.audioTrack = matchedAudio;
+          }
+        }
+
+        // Auto-select preferred subtitle if requested
+        if (options?.preferredTracks?.subtitleLanguage !== undefined) {
+          const prefSub = options.preferredTracks.subtitleLanguage;
+          if (!prefSub || prefSub.toLowerCase() === 'off' || prefSub.toLowerCase() === 'none') {
+            engine.subtitleTrack = null;
+          } else {
+            const matchedSub = event.availableSubtitleTracks.find((t) =>
+              matchesLanguage(t, prefSub),
+            );
+            if (matchedSub && matchedSub.id !== engine.subtitleTrack?.id) {
+              engine.subtitleTrack = matchedSub;
+            }
+          }
+        }
+
+        // Auto-select preferred quality if requested
+        if (options?.preferredTracks?.quality && options.preferredTracks.quality !== 'auto') {
+          const parsed = typeof options.preferredTracks.quality === 'string'
+            ? parseInt(options.preferredTracks.quality.replace(/[^0-9]/g, ''), 10)
+            : options.preferredTracks.quality;
+          if (parsed && !isNaN(parsed) && engine.purePlayerSetVideoQuality) {
+            engine.purePlayerSetVideoQuality(parsed).catch(() => {});
+          }
+        }
+
         setAudioTrack(engine.audioTrack);
         setSubtitleTrack(engine.subtitleTrack);
         const seconds = Number.isFinite(event.duration) && event.duration > 0
@@ -287,7 +361,7 @@ export function usePurePlayer(
 
     notify({ type: 'loadStart' });
     setState('loading');
-    engine.replaceAsync({ uri, contentType: format ?? 'auto' }).then(() => {
+    engine.replaceAsync({ uri, contentType: format ?? 'auto', headers: source.headers }).then(() => {
       replaced = true;
       startPlayback();
     }).catch(reportError);
@@ -318,8 +392,24 @@ export function usePurePlayer(
   }
 
   const commands: PlayerControls = {
-    selectAudio: (track: AudioTrack) => { engine.audioTrack = track; },
-    selectSubtitle: (track: SubtitleTrack | null) => { engine.subtitleTrack = track; },
+    selectAudio: (track: AudioTrack) => {
+      engine.audioTrack = track;
+      setAudioTrack(track);
+      options?.onTracksChanged?.({
+        audioLanguage: track.language || (track as any).name || track.label,
+        subtitleLanguage: engine.subtitleTrack ? (engine.subtitleTrack.language || (engine.subtitleTrack as any).name || engine.subtitleTrack.label) : null,
+        quality: videoQuality,
+      });
+    },
+    selectSubtitle: (track: SubtitleTrack | null) => {
+      engine.subtitleTrack = track;
+      setSubtitleTrack(track);
+      options?.onTracksChanged?.({
+        audioLanguage: engine.audioTrack ? (engine.audioTrack.language || (engine.audioTrack as any).name || engine.audioTrack.label) : undefined,
+        subtitleLanguage: track ? (track.language || (track as any).name || track.label) : null,
+        quality: videoQuality,
+      });
+    },
     async selectVideoQuality(quality) {
       if (Platform.OS !== 'android' || !engine.purePlayerSetVideoQuality) {
         throw new Error('Manual video quality requires a rebuilt Android app with the PurePlayer quality patch.');
@@ -330,6 +420,11 @@ export function usePurePlayer(
       await engine.purePlayerSetVideoQuality(quality === 'auto' ? null : quality);
       setVideoQuality(quality);
       onEvent?.({ type: 'videoQualityChanged', sourceId: source.id, quality });
+      options?.onTracksChanged?.({
+        audioLanguage: engine.audioTrack ? (engine.audioTrack.language || (engine.audioTrack as any).name || engine.audioTrack.label) : undefined,
+        subtitleLanguage: engine.subtitleTrack ? (engine.subtitleTrack.language || (engine.subtitleTrack as any).name || engine.subtitleTrack.label) : null,
+        quality,
+      });
     },
     play: () => {
       if (ended) replay();

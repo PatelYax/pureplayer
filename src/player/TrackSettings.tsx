@@ -241,16 +241,16 @@ export function TrackSettings({
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 18, backgroundColor: '#0004' },
-  panel: { width: '100%', maxWidth: 360, maxHeight: '85%', padding: 16, gap: 8, borderRadius: 20,
-    backgroundColor: '#091322F0', borderWidth: 1, borderColor: '#A8C6F044' },
+  backdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 18, backgroundColor: 'rgba(0, 0, 0, 0.75)' },
+  panel: { width: '100%', maxWidth: 360, maxHeight: '85%', padding: 16, gap: 8, borderRadius: 16,
+    backgroundColor: '#0A0A0AF8', borderWidth: 1, borderColor: '#1F1F1F' },
   heading: { color: colors.text, fontSize: 20, fontFamily: fonts.bold },
   option: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 46, paddingHorizontal: 10,
-    borderWidth: 2, borderColor: 'transparent', borderRadius: 10 },
-  selected: { backgroundColor: colors.selected },
+    borderWidth: 1.5, borderColor: 'transparent', borderRadius: 8 },
+  selected: { backgroundColor: 'rgba(56, 189, 248, 0.15)', borderColor: colors.accent },
   pressed: { backgroundColor: colors.pressed },
   focus: { borderColor: colors.focus, backgroundColor: colors.selected },
-  label: { color: colors.text, fontFamily: fonts.regular, fontSize: 16, flex: 1, textShadowColor: '#000', textShadowRadius: 4 },
-  check: { color: colors.focus, fontSize: 18, fontFamily: fonts.bold },
+  label: { color: colors.text, fontFamily: fonts.regular, fontSize: 15, flex: 1 },
+  check: { color: colors.accent, fontSize: 18, fontFamily: fonts.bold },
   error: { color: colors.error, fontFamily: fonts.regular },
 });
