@@ -125,6 +125,8 @@ export function PlaybackScreen({ source, goBack }: Props) {
 | `timedActions` | `readonly TimedPlayerAction[]` | Custom playback buttons, such as Skip Recap, Skip Intro, or Next Episode. Each has a label, timing, and a callback that receives `PlayerControls`. |
 | `title`, `subtitle` | `string` | Optional heading and secondary line beside the back arrow while playback controls are visible. |
 | `pauseMetadata` | `PauseMetadata` | Optional `name`, `image`, `detailLine`, and `description` for the animated paused screen. Omit the prop to disable it. |
+| `poster` | `string \| ImageSourcePropType` | Optional backdrop image (URI or local require source) shown during initial load instead of the circular spinner. Completely overlays the video surface and hides player controls/timeline until the first frame renders. |
+| `showPosterAccentBar` | `boolean` | Defaults to `true`. Pass `false` to hide the vertical blue accent line next to the poster title on the loading screen. |
 
 On phones and TV, Back closes an open track picker without hiding playback controls. Otherwise, Back hides visible controls or dismisses a visible timed action. When playback controls and pickers are already hidden, one Back press exits with no confirmation prompt. Exit order: `onExit`, then `navigate(backRoute)`, then `onBack`, then `onClose`, then normal host/Android Back if no callback applies.
 
@@ -151,6 +153,27 @@ Pass data from your app, such as TMDB metadata. PurePlayer does not call TMDB it
 The details appear after 3.5 seconds of inactivity while paused, including when the player opens with `autoPlay={false}` before the first Play press. They do not appear during buffering if playback is requested. Tap the screen or press a TV D-pad button or Back to return to the paused controls without resuming. If you leave the player paused, the details return after another 3.5 seconds of inactivity. In the standalone app, edit `demoMetadata` in [App.tsx](./src/App.tsx) or remove `{...demoMetadata}` from the `<PurePlayer>` call to remove all sample text and artwork.
 
 Load `SpaceGrotesk_400Regular` and `SpaceGrotesk_700Bold` with `useFonts` from `@expo-google-fonts/space-grotesk` before rendering the player, as shown in [App.tsx](./src/App.tsx). To use your host font instead, map `fonts.regular` and `fonts.bold` in the copied [theme.ts](./src/theme.ts) to your registered font names.
+
+### Poster loading screen and initial load lifecycle
+
+When you pass the `poster` prop (image URL or local require), PurePlayer replaces the circular activity indicator with a full-screen cinematic loading screen on initial stream setup:
+
+- **Initial Load Only:** The poster overlay displays before the first video frame renders or playback starts. Player controls, time labels, and timeline seekbars are completely hidden during this phase.
+- **SurfaceView Masking:** The underlying `VideoView` is kept at `opacity: 0` while the poster is displayed so Android's native `SurfaceView` does not flash black or punch through before the stream is ready.
+- **Standalone Exit:** The poster overlay includes a top-left back arrow so users can immediately cancel and back out without waiting for stream loading or touching the player controls.
+- **Mid-Playback Seeking:** Once playback begins (`hasStarted`), seeking forward/backward 10s or scrubbing the timeline does **not** re-display the poster screen and does **not** hide or replace the center playback buttons with loading spinners.
+- **Normal Loading Fallback:** If `poster` is omitted, the player renders the default circular `ActivityIndicator` in the center of the player controls during initial startup.
+
+```tsx
+<PurePlayer
+  source={{ id: 1, uri: streamUrl, format: 'hls' }}
+  title="Movie Title"
+  subtitle="Season 1 • Episode 1"
+  poster="https://image.tmdb.org/t/p/original/backdrop.jpg"
+  showPosterAccentBar={true}
+  onExit={goBack}
+/>
+```
 
 ### Callback reference
 

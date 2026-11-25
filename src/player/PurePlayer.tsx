@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import { VideoView } from 'expo-video';
 import { CastButton } from 'react-native-google-cast';
-import { ActivityIndicator, Animated, AppState, BackHandler, Dimensions, Easing, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View, type AppStateStatus, type GestureResponderEvent } from 'react-native';
+import { ActivityIndicator, Animated, AppState, BackHandler, Dimensions, Easing, Platform, Pressable, StyleSheet, Text, useTVEventHandler, View, type AppStateStatus, type GestureResponderEvent, type ImageSourcePropType } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { usePurePlayer, type PlaybackOptions, type PlayerControls, type PlayerEvent, type PlayerSource } from './usePurePlayer';
@@ -336,6 +336,16 @@ export type PurePlayerProps = BackNavigation & PlaybackOptions & {
   title?: string;
   subtitle?: string;
   pauseMetadata?: PauseMetadata;
+  /**
+   * Poster image source (URL string or ImageSourcePropType) displayed as the backdrop/loading screen
+   * instead of the generic circular loading spinner.
+   */
+  poster?: ImageSourcePropType | string;
+  /**
+   * Whether to show the accent (blue) vertical bar next to the poster / title.
+   * Defaults to true. Pass false to hide the blue line.
+   */
+  showPosterAccentBar?: boolean;
 };
 
 export function PurePlayer({
@@ -347,16 +357,18 @@ export function PurePlayer({
 function PlayerSession({
   source, onEvent, onSaveProgress, controls = true, autoRotate = false, initialOrientation, lockedOrientation,
   onExit, onBack, onClose, backRoute, navigate, onNext, onPrev, skipIntro, timedActions,
-  ref, initialPosition, autoPlay, title, subtitle, pauseMetadata,
+  ref, initialPosition, autoPlay, title, subtitle, pauseMetadata, poster, showPosterAccentBar = true,
 }: PurePlayerProps) {
-  const onSaveProgressEvent = useEffectEvent((payload: SaveProgressPayload) => {
-    onSaveProgress?.(payload);
-  });
+  const [startedSourceId, setStartedSourceId] = useState<number | null>(null);
+  const hasStarted = startedSourceId === source.id;
 
   const player = usePurePlayer(source, (event) => {
     onEvent?.(event);
+    if (event.type === 'firstFrameRendered' || (event.type === 'isPlayingChanged' && event.isPlaying) || (event.type === 'progress' && event.position > 0)) {
+      setStartedSourceId(source.id);
+    }
     if (event.type === 'checkpoint') {
-      onSaveProgressEvent({
+      onSaveProgress?.({
         position: event.position,
         duration: event.duration,
         ended: event.ended,
@@ -395,12 +407,64 @@ function PlayerSession({
   const brightness = usePlaybackBrightness(controls && !Platform.isTV);
   const { duration, videoSize } = player;
   usePlaybackOrientation(autoRotate, videoSize, initialOrientation, lockedOrientation);
+
+  const loading = player.state === 'loading' || (player.state === 'idle' && !player.ended);
+  const isInitialLoad = !hasStarted && loading;
+  const isPosterLoading = isInitialLoad && !!poster;
+
+  const gtaPulseAnim = useRef(new Animated.Value(0.4)).current;
+  const gtaZoomAnim = useRef(new Animated.Value(1.0)).current;
+
+  useEffect(() => {
+    if (!isPosterLoading) return;
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(gtaPulseAnim, {
+          toValue: 0.95,
+          duration: 1500,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(gtaPulseAnim, {
+          toValue: 0.35,
+          duration: 1500,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+
+    const zoom = Animated.loop(
+      Animated.sequence([
+        Animated.timing(gtaZoomAnim, {
+          toValue: 1.06,
+          duration: 6000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(gtaZoomAnim, {
+          toValue: 1.0,
+          duration: 6000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+
+    pulse.start();
+    zoom.start();
+
+    return () => {
+      pulse.stop();
+      zoom.stop();
+    };
+  }, [isPosterLoading, gtaPulseAnim, gtaZoomAnim]);
   const seekDisabled = duration === null || player.state === 'error';
   const hasPauseMetadata = !!(pauseMetadata?.name || pauseMetadata?.detailLine || pauseMetadata?.description || pauseMetadata?.image !== undefined);
   const canShowPauseDetails = controls && hasPauseMetadata && !player.playRequested && !player.isPlaying &&
     !player.ended && !player.error && !trackSettings && !cast.casting;
   const showPauseDetails = canShowPauseDetails && pauseDetailsVisible;
-  const showControls = controls && controlsVisible && !showPauseDetails;
+  const showControls = controls && controlsVisible && !showPauseDetails && !isPosterLoading;
   const gestures = useSeekGestures(player.position, duration, player.seekTo, controls && !seekDisabled && !trackSettings && !showPauseDetails && !cast.casting, showControls);
   const tvSeekPreview = Platform.isTV ? gestures.preview : null;
   const timelinePreview = scrubPosition ?? tvSeekPreview;
@@ -408,7 +472,6 @@ function PlayerSession({
   const progress = duration ? Math.min(100, Math.max(0, displayedPosition / duration * 100)) : 0;
   const showHours = (duration !== null && duration >= 3600) || displayedPosition >= 3600;
 
-  const loading = player.state === 'loading' || (player.state === 'idle' && !player.ended);
   const actionPosition = player.ended ? duration ?? player.position : player.position;
   const activeAction = timedActions?.find((action) => {
     const offset = action.start ?? action.secondsBeforeEnd;
@@ -499,16 +562,20 @@ function PlayerSession({
   }
 
   const lastProgressSaveRef = useRef(0);
-  const triggerSaveProgress = useEffectEvent((reason: SaveProgressReason) => {
+  const saveProgressNow = (reason: SaveProgressReason) => {
     if (cast.casting) return;
     const snapshot = player.getPlaybackSnapshot();
-    onSaveProgressEvent({
+    onSaveProgress?.({
       position: snapshot.position,
       duration: snapshot.duration,
       ended: snapshot.ended,
       reason,
     });
     lastProgressSaveRef.current = Date.now();
+  };
+
+  const triggerSaveProgress = useEffectEvent((reason: SaveProgressReason) => {
+    saveProgressNow(reason);
   });
 
   // 1. AppState listener: Home button, Recent Apps switcher, or incoming call
@@ -560,12 +627,12 @@ function PlayerSession({
     return true;
   });
 
-  const handleExplicitBack = useEffectEvent(() => {
-    triggerSaveProgress('exit');
+  const handleExplicitBack = () => {
+    saveProgressNow('exit');
     const exit = onBack ?? onExit ?? onClose ?? (backRoute !== undefined ? () => navigate(backRoute) : undefined);
     if (exit) exit();
     else hideControls();
-  });
+  };
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => handleHardwareBack());
@@ -610,14 +677,86 @@ function PlayerSession({
       setLandscape(width > height);
     }}>
       <VideoView
-        style={styles.video}
+        style={[styles.video, isPosterLoading && { opacity: 0 }]}
         player={player.engine}
         surfaceType="surfaceView"
         contentFit={fillScreen ? 'cover' : 'contain'}
         nativeControls={false}
-        onFirstFrameRender={player.firstFrameRendered}
+        onFirstFrameRender={() => {
+          setStartedSourceId(source.id);
+          player.firstFrameRendered();
+        }}
       />
-      {controls && (
+      {isPosterLoading && (
+        <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 10, backgroundColor: '#000000', overflow: 'hidden' }]}>
+          <Animated.Image
+            source={typeof poster === 'string' ? { uri: poster } : poster}
+            style={[
+              styles.loadingPosterImage,
+              { transform: [{ scale: gtaZoomAnim }] },
+            ]}
+            resizeMode="cover"
+          />
+          {/* Cinematic Vignette Shade */}
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <Svg width="100%" height="100%">
+              <Defs>
+                <LinearGradient id="gtaVignette" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <Stop offset="0%" stopColor="#000000" stopOpacity={0.82} />
+                  <Stop offset="25%" stopColor="#000000" stopOpacity={0.2} />
+                  <Stop offset="60%" stopColor="#000000" stopOpacity={0.45} />
+                  <Stop offset="100%" stopColor="#000000" stopOpacity={0.96} />
+                </LinearGradient>
+              </Defs>
+              <Rect width="100%" height="100%" fill="url(#gtaVignette)" />
+            </Svg>
+          </View>
+          {/* Light Vibrant GTA-Style Breathing Glow Layer */}
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.gtaGlowOverlay,
+              { opacity: gtaPulseAnim },
+            ]}
+          />
+          {/* Top Bar with Back Button */}
+          <View pointerEvents="box-none" style={[styles.top, {
+            top: insets.top + edge, left: insets.left + edge, right: insets.right + edge,
+          }]}>
+            <IconButton icon="backArrow" label="Back" compact onPress={handleExplicitBack} />
+          </View>
+          {/* Bottom Content (Movie Info) aligned with exact same left padding as back arrow */}
+          <View
+            pointerEvents="none"
+            style={[
+              styles.loadingPosterBottom,
+              {
+                left: insets.left + edge,
+                right: insets.right + edge,
+                bottom: insets.bottom + edge,
+              },
+            ]}
+          >
+            <View style={styles.loadingPosterTitleRow}>
+              {showPosterAccentBar && <View style={styles.loadingPosterAccentBar} />}
+              {!!title && (
+                <Text style={styles.loadingPosterTitle} numberOfLines={1}>
+                  {title}
+                </Text>
+              )}
+            </View>
+            {!!subtitle && (
+              <Text style={styles.loadingPosterSubtitle} numberOfLines={1}>
+                {subtitle}
+              </Text>
+            )}
+            <View style={styles.gtaLoadingBarTrack}>
+              <Animated.View style={[styles.gtaLoadingBarFill, { opacity: gtaPulseAnim }]} />
+            </View>
+          </View>
+        </View>
+      )}
+      {controls && !isPosterLoading && (
         <View
           pointerEvents="box-none"
           style={StyleSheet.absoluteFill}
@@ -699,7 +838,7 @@ function PlayerSession({
               <View pointerEvents="box-none" style={styles.center}>
                 {cast.casting ? (
                   <PlayerButton label="Cast controls" onPress={cast.openControls} />
-                ) : loading ? (
+                ) : isInitialLoad && !poster ? (
                   <ActivityIndicator size="large" color={colors.accent} accessibilityLabel="Loading video" />
                 ) : player.error ? (
                   <Text accessibilityRole="alert" style={styles.error}>{player.error}</Text>
@@ -721,7 +860,7 @@ function PlayerSession({
               )}
             </View>
           )}
-          {!cast.casting && (showControls || tvSeekPreview !== null) && (
+          {!cast.casting && !isPosterLoading && (showControls || tvSeekPreview !== null) && (
               <View pointerEvents={Platform.isTV && !showControls ? 'none' : 'auto'} style={[styles.timeline, { bottom: insets.bottom + edge, left: insets.left + edge, right: insets.right + edge }]}>
                 {brightness.error && <Text accessibilityRole="alert" style={styles.error}>{brightness.error}</Text>}
                 {duration !== null && (
@@ -957,6 +1096,61 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     fontSize: Platform.isTV ? 16 : 14,
     letterSpacing: 0.4,
+  },
+  loadingPosterImage: {
+    width: '100%',
+    height: '100%',
+  },
+  gtaGlowOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+  },
+  loadingPosterBottom: {
+    position: 'absolute',
+    gap: 8,
+  },
+  loadingPosterTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  loadingPosterAccentBar: {
+    width: 4,
+    height: Platform.isTV ? 34 : 26,
+    borderRadius: 2,
+    backgroundColor: colors.accent,
+  },
+  loadingPosterTitle: {
+    color: '#FFFFFF',
+    fontFamily: fonts.bold,
+    fontSize: Platform.isTV ? 30 : 22,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    textShadowColor: 'rgba(0, 0, 0, 0.95)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 8,
+  },
+  loadingPosterSubtitle: {
+    color: '#CBD5E1',
+    fontFamily: fonts.regular,
+    fontSize: Platform.isTV ? 16 : 13,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    textShadowColor: 'rgba(0, 0, 0, 0.9)',
+    textShadowRadius: 6,
+  },
+  gtaLoadingBarTrack: {
+    width: 140,
+    height: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginTop: 4,
+  },
+  gtaLoadingBarFill: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: colors.accent,
   },
   secondary: { backgroundColor: 'transparent', borderColor: colors.border },
   active: { backgroundColor: colors.pressed },

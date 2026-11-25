@@ -80,7 +80,7 @@ On phones and tablets, the playback buttons and timeline also hide after four se
 - **Video quality:** Use the video quality icon to choose **Auto** or a resolution offered by the stream and supported by your device. The icon appears when multiple supported resolutions are available. A successful selection closes the picker and may briefly buffer without changing the stream URL. Manual quality requires a rebuilt Android app; installing dependencies applies the native patch automatically.
 - **Google Cast:** On supported Android phones, Cast is the far-right toolbar button for network streams. Use **Cast controls** to control the receiver after connecting. Downloaded files remain local. Cast requires a rebuilt Android app.
 - **Navigation:** Tap outside a picker or press Back to close it without hiding playback controls. The on-screen back arrow hides the controls. Android Back hides visible controls first; when they are already hidden, one Back press exits playback with no confirmation prompt. The standalone app returns to its home screen.
-- **Loading and errors:** A centered blue spinner shows during loading or buffering without a dimming background. Playback failures show a message, and finishing a video exposes Replay.
+- **Loading and errors:** On initial startup, passing `poster` displays a cinematic loading screen with title, subtitle, accent bar, and standalone back button while the stream prepares, completely hiding player controls and timeline. Once playback begins, seeking mid-playback does not re-trigger loading overlays and keeps the play/pause/seek controls interactive and responsive. When `poster` is omitted, a centered blue spinner shows during initial loading without a dimming background. Playback failures show an alert message, and finishing a video exposes Replay.
 
 Dolby Vision, HDR, and Atmos output are not guaranteed: they depend on the stream or file, Android device, and connected display or audio equipment. Verify the actual output on the target hardware.
 
@@ -140,6 +140,8 @@ Use a stable numeric `source.id` for the current video and a new ID when switchi
 | `onPrev`, `onNext` | Show their respective buttons only when supplied. The host chooses the previous or next source. |
 | `skipIntro` | `{ start, end }` in seconds. Shows **Skip Intro** while playback is within `[start, end)` and seeks to `end` when pressed. Requires a valid range within a known duration. |
 | `timedActions` | Custom buttons with a label, a time window, and a callback that receives playback methods. |
+| `poster` | Optional backdrop image (URI string or image source) displayed during initial load instead of the circular spinner. Completely overlays video surface and hides player controls/timeline until the first frame renders. |
+| `showPosterAccentBar` | Defaults to `true`. Pass `false` to hide the vertical blue accent line next to the poster title on the initial loading screen. |
 
 ### Playback events
 
