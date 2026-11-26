@@ -798,6 +798,11 @@ function PlayerSession({
               onPress={toggleControls}
             />
           )}
+          {!showControls && loading && !isPosterLoading && !cast.casting && !player.error && (
+            <View pointerEvents="none" style={[styles.center, StyleSheet.absoluteFill]}>
+              <ActivityIndicator size="large" color={colors.accent} accessibilityLabel="Loading video" />
+            </View>
+          )}
           {showControls && (
             <View pointerEvents="box-none" style={styles.overlay}>
               {!loading && (
@@ -843,7 +848,7 @@ function PlayerSession({
               <View pointerEvents="box-none" style={styles.center}>
                 {cast.casting ? (
                   <PlayerButton label="Cast controls" onPress={cast.openControls} />
-                ) : isInitialLoad && !poster ? (
+                ) : loading ? (
                   <ActivityIndicator size="large" color={colors.accent} accessibilityLabel="Loading video" />
                 ) : player.error ? (
                   <Text accessibilityRole="alert" style={styles.error}>{player.error}</Text>

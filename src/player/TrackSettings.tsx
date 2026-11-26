@@ -89,45 +89,59 @@ function normalizeLanguageName(codeOrName: string | undefined): string | null {
   return trimmed;
 }
 
-function getTrackLabel(
-  track: AudioTrack | SubtitleTrack,
-  index: number,
-  allTracks: (AudioTrack | SubtitleTrack)[],
-  fallbackPrefix: string,
-): string {
-  // In expo-video on Android, the HLS manifest NAME (e.g. "Hindi", "Original") is mapped to track.name!
-  // Meanwhile, track.label is mapped to Locale(language).displayLanguage which is often "und" or "Unknown".
+export function getTrackBaseLanguage(track: AudioTrack | SubtitleTrack | null | undefined): string {
+  if (!track) return '';
   const candidateName = normalizeLanguageName((track as any).name);
   const candidateLabel = normalizeLanguageName((track as any).label);
   const candidateLang = normalizeLanguageName(track.language);
   const candidateId = normalizeLanguageName((track as any).id);
 
-  const baseLabel =
-    candidateName || candidateLabel || candidateLang || candidateId;
+  return (
+    candidateName ||
+    candidateLabel ||
+    candidateLang ||
+    candidateId ||
+    track.language ||
+    (track as any).name ||
+    track.label ||
+    ''
+  );
+}
 
-  if (!baseLabel) {
+export function getTrackDuplicateInfo(
+  track: AudioTrack | SubtitleTrack,
+  allTracks: (AudioTrack | SubtitleTrack)[],
+): { baseLanguage: string; duplicateIndex: number; totalDuplicates: number } {
+  const baseLanguage = getTrackBaseLanguage(track);
+  const duplicates = allTracks.filter((t) => getTrackBaseLanguage(t) === baseLanguage);
+  const duplicateIndex = duplicates.indexOf(track) + 1;
+  return {
+    baseLanguage,
+    duplicateIndex: Math.max(1, duplicateIndex),
+    totalDuplicates: duplicates.length,
+  };
+}
+
+export function getTrackLabel(
+  track: AudioTrack | SubtitleTrack,
+  index: number,
+  allTracks: (AudioTrack | SubtitleTrack)[],
+  fallbackPrefix: string,
+): string {
+  const { baseLanguage, duplicateIndex, totalDuplicates } = getTrackDuplicateInfo(track, allTracks);
+
+  if (!baseLanguage) {
     if (fallbackPrefix === 'Audio' && allTracks.length === 1) {
       return 'Default Audio';
     }
     return `${fallbackPrefix} ${index + 1}`;
   }
 
-  // Check how many tracks resolve to this exact base label
-  const duplicates = allTracks.filter((t) => {
-    const tBase =
-      normalizeLanguageName((t as any).name) ||
-      normalizeLanguageName((t as any).label) ||
-      normalizeLanguageName(t.language) ||
-      normalizeLanguageName((t as any).id);
-    return tBase === baseLabel;
-  });
-
-  if (duplicates.length > 1) {
-    const duplicateIndex = duplicates.indexOf(track);
-    return `${baseLabel} (${duplicateIndex + 1})`;
+  if (totalDuplicates > 1) {
+    return `${baseLanguage} (${duplicateIndex})`;
   }
 
-  return baseLabel;
+  return baseLanguage;
 }
 
 export function TrackSettings({
@@ -171,6 +185,61 @@ export function TrackSettings({
     }
   }
 
+  const selectedAudioIndex = (() => {
+    if (!audioTrack) return 0;
+    const refIdx = audioTracks.indexOf(audioTrack);
+    if (refIdx !== -1) return refIdx;
+
+    if (audioTrack.id) {
+      const idMatches = audioTracks
+        .map((t, idx) => (t.id === audioTrack.id ? idx : -1))
+        .filter((idx) => idx !== -1);
+      if (idMatches.length === 1) return idMatches[0];
+    }
+
+    const targetInfo = getTrackDuplicateInfo(audioTrack, audioTracks);
+    const matchIdx = audioTracks.findIndex((t) => {
+      const tInfo = getTrackDuplicateInfo(t, audioTracks);
+      return (
+        tInfo.baseLanguage === targetInfo.baseLanguage &&
+        tInfo.duplicateIndex === targetInfo.duplicateIndex
+      );
+    });
+    if (matchIdx !== -1) return matchIdx;
+
+    const baseIdx = audioTracks.findIndex(
+      (t) => getTrackBaseLanguage(t) === targetInfo.baseLanguage,
+    );
+    return baseIdx !== -1 ? baseIdx : 0;
+  })();
+
+  const selectedSubIndex = (() => {
+    if (!subtitleTrack) return -1;
+    const refIdx = subtitleTracks.indexOf(subtitleTrack);
+    if (refIdx !== -1) return refIdx;
+
+    if (subtitleTrack.id) {
+      const idMatches = subtitleTracks
+        .map((t, idx) => (t.id === subtitleTrack.id ? idx : -1))
+        .filter((idx) => idx !== -1);
+      if (idMatches.length === 1) return idMatches[0];
+    }
+
+    const targetInfo = getTrackDuplicateInfo(subtitleTrack, subtitleTracks);
+    const matchIdx = subtitleTracks.findIndex((t) => {
+      const tInfo = getTrackDuplicateInfo(t, subtitleTracks);
+      return (
+        tInfo.baseLanguage === targetInfo.baseLanguage &&
+        tInfo.duplicateIndex === targetInfo.duplicateIndex
+      );
+    });
+    if (matchIdx !== -1) return matchIdx;
+
+    return subtitleTracks.findIndex(
+      (t) => getTrackBaseLanguage(t) === targetInfo.baseLanguage,
+    );
+  })();
+
   return (
     <Modal transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
       <View style={styles.backdrop}>
@@ -191,9 +260,7 @@ export function TrackSettings({
             )}
             {mode === 'audio' && audioTracks.map((track, i) => {
               const label = getTrackLabel(track, i, audioTracks, 'Audio');
-              const isSelected = audioTrack
-                ? (audioTrack.id && track.id ? audioTrack.id === track.id : audioTrack === track)
-                : i === 0;
+              const isSelected = i === selectedAudioIndex;
               return (
                 <Option
                   key={`${track.id ?? 'audio'}-${i}`}
@@ -208,15 +275,13 @@ export function TrackSettings({
               <>
                 <Option
                   label="Off"
-                  selected={subtitleTrack === null}
-                  preferred={subtitleTrack === null}
+                  selected={subtitleTrack === null || selectedSubIndex === -1}
+                  preferred={subtitleTrack === null || selectedSubIndex === -1}
                   onPress={() => { selectSubtitle(null); onClose(); }}
                 />
                 {subtitleTracks.map((track, i) => {
                   const label = getTrackLabel(track, i, subtitleTracks, 'Subtitle');
-                  const isSelected = subtitleTrack
-                    ? (subtitleTrack.id && track.id ? subtitleTrack.id === track.id : subtitleTrack === track)
-                    : false;
+                  const isSelected = i === selectedSubIndex;
                   return (
                     <Option
                       key={`${track.id ?? 'sub'}-${i}`}

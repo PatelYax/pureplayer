@@ -125,8 +125,8 @@ export function PlaybackScreen({ source, goBack }: Props) {
 | `timedActions` | `readonly TimedPlayerAction[]` | Custom playback buttons, such as Skip Recap, Skip Intro, or Next Episode. Each has a label, timing, and a callback that receives `PlayerControls`. |
 | `title`, `subtitle` | `string` | Optional heading and secondary line beside the back arrow while playback controls are visible. |
 | `pauseMetadata` | `PauseMetadata` | Optional `name`, `image`, `detailLine`, and `description` for the animated paused screen. Omit the prop to disable it. |
-| `preferredTracks` | `PreferredTracks` | `{ audioLanguage?: string; subtitleLanguage?: string; quality?: string }`. Automatically selects matching audio, subtitle, and resolution tracks on source load. Supports ISO-639 codes (e.g. `hin`, `en`, `es`) or localized names (`Hindi`, `English`). |
-| `onTracksChanged` | `(tracks: { audioLanguage?: string; subtitleLanguage?: string; quality?: string }) => void` | Invoked when the user manually changes audio track, subtitle track, or resolution in Track Settings. Persist to global app settings or Continue Watching metadata. |
+| `preferredTracks` | `PreferredTracks` | `{ audioLanguage?: string; audioDuplicateIndex?: number; subtitleLanguage?: string; subtitleDuplicateIndex?: number; quality?: string }`. Automatically selects matching audio, subtitle, and resolution tracks on source load. Supports ISO-639 codes (e.g. `hin`, `en`, `es`), localized names (`Hindi`, `English`), and 1-based relative duplicate indices (`audioDuplicateIndex: 2`) when a stream provides multiple tracks with identical labels. |
+| `onTracksChanged` | `(tracks: { audioLanguage?: string; audioDuplicateIndex?: number; subtitleLanguage?: string; subtitleDuplicateIndex?: number; quality?: string }) => void` | Invoked when the user manually changes audio track, subtitle track, or resolution in Track Settings. Emits the normalized language name alongside its 1-based relative duplicate occurrence index. Persist to global app settings or Continue Watching metadata. |
 | `poster` | `string \| ImageSourcePropType` | Optional backdrop image (URI or local require source) shown during initial load instead of the circular spinner. Completely overlays the video surface and hides player controls/timeline until the first frame renders. |
 | `showPosterAccentBar` | `boolean` | Defaults to `true`. Pass `false` to hide the vertical blue accent line next to the poster title on the loading screen. |
 
@@ -292,22 +292,31 @@ Pass `preferredTracks` to automatically select matching tracks when the stream l
   source={source}
   preferredTracks={{
     audioLanguage: 'hin',        // or 'Hindi', 'en', 'Japanese', etc.
+    audioDuplicateIndex: 1,      // 1-based occurrence index among same-language tracks
     subtitleLanguage: 'English',  // or 'en', 'hin', 'off'
+    subtitleDuplicateIndex: 1,
     quality: '1080p',            // or '720p', '4k', 'Auto'
   }}
   onTracksChanged={(tracks) => {
     // Save to global user settings and per-title Continue Watching entry
+    // tracks: { audioLanguage, audioDuplicateIndex, subtitleLanguage, subtitleDuplicateIndex, quality }
     console.log('User changed tracks:', tracks);
   }}
 />
 ```
 
-### Language Normalization
+### Language Normalization & Duplicate Relative Indexing
 
 PurePlayer automatically maps between 2-letter ISO-639-1 codes (`hi`, `en`, `ja`, `es`), 3-letter ISO-639-2 codes (`hin`, `eng`, `jpn`, `spa`), and standard English display names (`Hindi`, `English`, `Japanese`, `Spanish`). You can pass either the code or display name in `preferredTracks`:
 - `'hin'` matches `'Hindi'`, `'hin'`, and `'hi'`
 - `'English'` matches `'en'`, `'eng'`, and `'English'`
 - Matching is case-insensitive and trims whitespace.
+
+When an HLS or DASH stream contains multiple audio or subtitle tracks with the exact same name or language (for example, two different "English" audio commentary or bitrate streams):
+- Track Settings labels them clearly as `English (1)` and `English (2)`.
+- Only the single active track shows a checkmark (never both).
+- `onTracksChanged` emits `audioDuplicateIndex` (e.g. `1` for the 1st English track, `2` for the 2nd).
+- Resuming with `audioDuplicateIndex: 2` automatically finds all matching English tracks and selects the 2nd one.
 
 ### Track Change Callbacks (`onTracksChanged`)
 
@@ -316,7 +325,9 @@ Whenever the user opens Track Settings and selects an audio track, subtitle trac
 ```ts
 onTracksChanged({
   audioLanguage: 'Hindi',
+  audioDuplicateIndex: 1,
   subtitleLanguage: 'English',
+  subtitleDuplicateIndex: 1,
   quality: '1080p',
 })
 ```

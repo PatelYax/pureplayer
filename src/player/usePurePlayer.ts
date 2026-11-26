@@ -2,6 +2,7 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import { useVideoPlayer, type AudioTrack, type SubtitleTrack } from 'expo-video';
+import { getTrackDuplicateInfo } from './TrackSettings';
 
 export type PlayerSource = {
   id: number;
@@ -21,7 +22,13 @@ export type PlaybackSnapshot = {
 
 export type PreferredTracks = {
   audioLanguage?: string | null;
+  audioDuplicateIndex?: number | null;
+  /** @deprecated Alias for audioDuplicateIndex */
+  audioTrackIndex?: number | null;
   subtitleLanguage?: string | null;
+  subtitleDuplicateIndex?: number | null;
+  /** @deprecated Alias for subtitleDuplicateIndex */
+  subtitleTrackIndex?: number | null;
   quality?: VideoQuality | string | null;
 };
 
@@ -31,7 +38,11 @@ export type PlaybackOptions = {
   preferredTracks?: PreferredTracks;
   onTracksChanged?: (selected: {
     audioLanguage?: string;
+    audioDuplicateIndex?: number;
+    audioTrackIndex?: number;
     subtitleLanguage?: string | null;
+    subtitleDuplicateIndex?: number | null;
+    subtitleTrackIndex?: number | null;
     quality?: VideoQuality;
   }) => void;
 };
@@ -86,25 +97,54 @@ type EventPayload = PlayerEvent extends infer Event
 function matchesLanguage(track: AudioTrack | SubtitleTrack, targetLang?: string | null): boolean {
   if (!targetLang || !track) return false;
   const target = targetLang.trim().toLowerCase();
-  if (!target) return false;
+  if (!target || target === 'und' || target === 'unknown') return false;
 
-  const trackLang = (track.language ?? '').toLowerCase();
-  const trackLabel = (track.label ?? '').toLowerCase();
-  const trackName = ((track as any).name ?? '').toLowerCase();
+  const trackLang = (track.language ?? '').trim().toLowerCase();
+  const trackLabel = (track.label ?? '').trim().toLowerCase();
+  const trackName = ((track as any).name ?? '').trim().toLowerCase();
 
-  return (
-    trackLang === target ||
-    trackLang.startsWith(target) ||
-    target.startsWith(trackLang) ||
-    trackLabel.includes(target) ||
-    trackName.includes(target) ||
-    (target === 'hin' && (trackLang === 'hi' || trackLabel.includes('hindi') || trackName.includes('hindi'))) ||
-    (target === 'hindi' && (trackLang === 'hi' || trackLang === 'hin')) ||
-    (target === 'eng' && (trackLang === 'en' || trackLabel.includes('english') || trackName.includes('english'))) ||
-    (target === 'english' && (trackLang === 'en' || trackLang === 'eng')) ||
-    (target === 'jpn' && (trackLang === 'ja' || trackLabel.includes('japanese') || trackName.includes('japanese'))) ||
-    (target === 'japanese' && (trackLang === 'ja' || trackLang === 'jpn'))
-  );
+  // Explicit name/label matches
+  if (trackName && (trackName === target || trackName.includes(target) || target.includes(trackName))) {
+    return true;
+  }
+  if (trackLabel && (trackLabel === target || trackLabel.includes(target) || target.includes(trackLabel))) {
+    return true;
+  }
+
+  // Language code match (prevent empty string startsWith matches)
+  if (trackLang && trackLang !== 'und' && trackLang !== 'unknown') {
+    if (trackLang === target || (target.length >= 2 && trackLang.startsWith(target)) || (trackLang.length >= 2 && target.startsWith(trackLang))) {
+      return true;
+    }
+  }
+
+  // Common language alias matches
+  if ((target === 'hin' || target === 'hi' || target === 'hindi') &&
+      (trackLang === 'hi' || trackLang === 'hin' || trackLabel.includes('hindi') || trackName.includes('hindi'))) {
+    return true;
+  }
+  if ((target === 'eng' || target === 'en' || target === 'english') &&
+      (trackLang === 'en' || trackLang === 'eng' || trackLabel.includes('english') || trackName.includes('english'))) {
+    return true;
+  }
+  if ((target === 'jpn' || target === 'ja' || target === 'japanese') &&
+      (trackLang === 'ja' || trackLang === 'jpn' || trackLabel.includes('japanese') || trackName.includes('japanese'))) {
+    return true;
+  }
+  if ((target === 'spa' || target === 'es' || target === 'spanish') &&
+      (trackLang === 'es' || trackLang === 'spa' || trackLabel.includes('spanish') || trackName.includes('spanish'))) {
+    return true;
+  }
+  if ((target === 'tam' || target === 'ta' || target === 'tamil') &&
+      (trackLang === 'ta' || trackLang === 'tam' || trackLabel.includes('tamil') || trackName.includes('tamil'))) {
+    return true;
+  }
+  if ((target === 'tel' || target === 'te' || target === 'telugu') &&
+      (trackLang === 'te' || trackLang === 'tel' || trackLabel.includes('telugu') || trackName.includes('telugu'))) {
+    return true;
+  }
+
+  return false;
 }
 
 const playbackStates = {
@@ -141,7 +181,7 @@ export function usePurePlayer(
   const [audioTrack, setAudioTrack] = useState<AudioTrack | null>(null);
   const [subtitleTrack, setSubtitleTrack] = useState<SubtitleTrack | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const latestPositionRef = useRef(0);
+  const latestPositionRef = useRef(options?.initialPosition ?? 0);
   const latestDurationRef = useRef<number | null>(null);
   const notify = useEffectEvent((event: EventPayload) => {
     onEvent?.({ ...event, sourceId: source.id });
@@ -158,7 +198,7 @@ export function usePurePlayer(
     let currentTime = latestPositionRef.current;
     try {
       const engineTime = engine.currentTime;
-      if (Number.isFinite(engineTime) && (engineTime > 0 || latestPositionRef.current === 0)) {
+      if (Number.isFinite(engineTime) && engineTime > 0) {
         currentTime = engineTime;
       }
     } catch {
@@ -221,14 +261,13 @@ export function usePurePlayer(
     function startPlayback() {
       if (!active || failed || started || !replaced || (shouldResume && !receivedMetadata)) return;
       started = true;
-        // An end-of-video position is not a useful resume point.
-      if (shouldResume && loadedDuration !== null && initialPosition < loadedDuration) {
+      if (shouldResume && (loadedDuration === null || initialPosition < loadedDuration)) {
         engine.currentTime = initialPosition;
-        // Do not publish a progress sample until the engine reports its actual position.
+        latestPositionRef.current = initialPosition;
         setPosition(initialPosition);
         notify({ type: 'resumeApplied', position: initialPosition });
-      } else if (shouldResume) {
-        console.warn('PurePlayer could not resume: the saved position is outside the playable duration or the duration is unknown.');
+      } else if (shouldResume && loadedDuration !== null && initialPosition >= loadedDuration) {
+        console.warn('PurePlayer could not resume: the saved position is outside the playable duration.');
       }
       if (playRequestedRef.current) engine.play();
     }
@@ -281,25 +320,42 @@ export function usePurePlayer(
 
         // Auto-select preferred audio if requested
         if (options?.preferredTracks?.audioLanguage) {
-          const matchedAudio = event.availableAudioTracks.find((t) =>
-            matchesLanguage(t, options.preferredTracks?.audioLanguage),
+          const prefLang = options.preferredTracks.audioLanguage;
+          const prefIndex =
+            options.preferredTracks.audioDuplicateIndex ??
+            options.preferredTracks.audioTrackIndex ??
+            1;
+          const matchingAudioTracks = event.availableAudioTracks.filter((t) =>
+            matchesLanguage(t, prefLang),
           );
-          if (matchedAudio && matchedAudio.id !== engine.audioTrack?.id) {
-            engine.audioTrack = matchedAudio;
+          if (matchingAudioTracks.length > 0) {
+            const targetIdx = Math.max(0, Math.min(prefIndex - 1, matchingAudioTracks.length - 1));
+            const matchedAudio = matchingAudioTracks[targetIdx];
+            if (matchedAudio && matchedAudio.id !== engine.audioTrack?.id) {
+              engine.audioTrack = matchedAudio;
+            }
           }
         }
 
         // Auto-select preferred subtitle if requested
         if (options?.preferredTracks?.subtitleLanguage !== undefined) {
           const prefSub = options.preferredTracks.subtitleLanguage;
+          const prefSubIndex =
+            options.preferredTracks.subtitleDuplicateIndex ??
+            options.preferredTracks.subtitleTrackIndex ??
+            1;
           if (!prefSub || prefSub.toLowerCase() === 'off' || prefSub.toLowerCase() === 'none') {
             engine.subtitleTrack = null;
           } else {
-            const matchedSub = event.availableSubtitleTracks.find((t) =>
+            const matchingSubTracks = event.availableSubtitleTracks.filter((t) =>
               matchesLanguage(t, prefSub),
             );
-            if (matchedSub && matchedSub.id !== engine.subtitleTrack?.id) {
-              engine.subtitleTrack = matchedSub;
+            if (matchingSubTracks.length > 0) {
+              const targetIdx = Math.max(0, Math.min(prefSubIndex - 1, matchingSubTracks.length - 1));
+              const matchedSub = matchingSubTracks[targetIdx];
+              if (matchedSub && matchedSub.id !== engine.subtitleTrack?.id) {
+                engine.subtitleTrack = matchedSub;
+              }
             }
           }
         }
@@ -366,10 +422,17 @@ export function usePurePlayer(
         });
       }),
       engine.addListener('playToEnd', () => {
+        const cur = engine.currentTime;
+        const dur = loadedDuration ?? latestDurationRef.current;
+        // False ended guard: only set ended if the position was truly close to duration (or > 15s)
+        const isLegitEnded = dur !== null && dur > 15 && cur >= dur - 10;
+        if (!isLegitEnded) {
+          return;
+        }
         setEnded(true);
         notify({
           type: 'checkpoint', reason: 'ended', ended: true,
-          position: loadedDuration ?? engine.currentTime, duration: loadedDuration,
+          position: dur, duration: dur,
         });
         notify({ type: 'ended' });
       }),
@@ -412,18 +475,30 @@ export function usePurePlayer(
     selectAudio: (track: AudioTrack) => {
       engine.audioTrack = track;
       setAudioTrack(track);
+      const audioInfo = getTrackDuplicateInfo(track, audioTracks);
+      const subInfo = engine.subtitleTrack ? getTrackDuplicateInfo(engine.subtitleTrack, subtitleTracks) : null;
       options?.onTracksChanged?.({
-        audioLanguage: track.language || (track as any).name || track.label,
-        subtitleLanguage: engine.subtitleTrack ? (engine.subtitleTrack.language || (engine.subtitleTrack as any).name || engine.subtitleTrack.label) : null,
+        audioLanguage: audioInfo.baseLanguage,
+        audioDuplicateIndex: audioInfo.duplicateIndex,
+        audioTrackIndex: audioInfo.duplicateIndex,
+        subtitleLanguage: subInfo?.baseLanguage ?? null,
+        subtitleDuplicateIndex: subInfo?.duplicateIndex ?? null,
+        subtitleTrackIndex: subInfo?.duplicateIndex ?? null,
         quality: videoQuality,
       });
     },
     selectSubtitle: (track: SubtitleTrack | null) => {
       engine.subtitleTrack = track;
       setSubtitleTrack(track);
+      const audioInfo = engine.audioTrack ? getTrackDuplicateInfo(engine.audioTrack, audioTracks) : null;
+      const subInfo = track ? getTrackDuplicateInfo(track, subtitleTracks) : null;
       options?.onTracksChanged?.({
-        audioLanguage: engine.audioTrack ? (engine.audioTrack.language || (engine.audioTrack as any).name || engine.audioTrack.label) : undefined,
-        subtitleLanguage: track ? (track.language || (track as any).name || track.label) : null,
+        audioLanguage: audioInfo?.baseLanguage,
+        audioDuplicateIndex: audioInfo?.duplicateIndex,
+        audioTrackIndex: audioInfo?.duplicateIndex,
+        subtitleLanguage: subInfo?.baseLanguage ?? null,
+        subtitleDuplicateIndex: subInfo?.duplicateIndex ?? null,
+        subtitleTrackIndex: subInfo?.duplicateIndex ?? null,
         quality: videoQuality,
       });
     },
@@ -437,9 +512,15 @@ export function usePurePlayer(
       await engine.purePlayerSetVideoQuality(quality === 'auto' ? null : quality);
       setVideoQuality(quality);
       onEvent?.({ type: 'videoQualityChanged', sourceId: source.id, quality });
+      const audioInfo = engine.audioTrack ? getTrackDuplicateInfo(engine.audioTrack, audioTracks) : null;
+      const subInfo = engine.subtitleTrack ? getTrackDuplicateInfo(engine.subtitleTrack, subtitleTracks) : null;
       options?.onTracksChanged?.({
-        audioLanguage: engine.audioTrack ? (engine.audioTrack.language || (engine.audioTrack as any).name || engine.audioTrack.label) : undefined,
-        subtitleLanguage: engine.subtitleTrack ? (engine.subtitleTrack.language || (engine.subtitleTrack as any).name || engine.subtitleTrack.label) : null,
+        audioLanguage: audioInfo?.baseLanguage,
+        audioDuplicateIndex: audioInfo?.duplicateIndex,
+        audioTrackIndex: audioInfo?.duplicateIndex,
+        subtitleLanguage: subInfo?.baseLanguage ?? null,
+        subtitleDuplicateIndex: subInfo?.duplicateIndex ?? null,
+        subtitleTrackIndex: subInfo?.duplicateIndex ?? null,
         quality,
       });
     },
