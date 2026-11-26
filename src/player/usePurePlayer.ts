@@ -141,6 +141,8 @@ export function usePurePlayer(
   const [audioTrack, setAudioTrack] = useState<AudioTrack | null>(null);
   const [subtitleTrack, setSubtitleTrack] = useState<SubtitleTrack | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const latestPositionRef = useRef(0);
+  const latestDurationRef = useRef<number | null>(null);
   const notify = useEffectEvent((event: EventPayload) => {
     onEvent?.({ ...event, sourceId: source.id });
   });
@@ -153,9 +155,19 @@ export function usePurePlayer(
   }
 
   function getPlaybackSnapshot(): PlaybackSnapshot {
+    let currentTime = latestPositionRef.current;
+    try {
+      const engineTime = engine.currentTime;
+      if (Number.isFinite(engineTime) && (engineTime > 0 || latestPositionRef.current === 0)) {
+        currentTime = engineTime;
+      }
+    } catch {
+      // Native engine shared object may already be released during unmount
+    }
+    const resolvedDuration = duration ?? latestDurationRef.current;
     return {
-      position: ended && duration !== null ? duration : engine.currentTime,
-      duration,
+      position: ended && resolvedDuration !== null ? resolvedDuration : currentTime,
+      duration: resolvedDuration,
       ended,
     };
   }
@@ -307,6 +319,7 @@ export function usePurePlayer(
         const seconds = Number.isFinite(event.duration) && event.duration > 0
           ? event.duration : null;
         loadedDuration = seconds;
+        latestDurationRef.current = seconds;
         receivedMetadata = true;
         setDuration(seconds);
         notify({ type: 'durationChanged', duration: seconds });
@@ -342,6 +355,9 @@ export function usePurePlayer(
         notify({ type: 'playbackRateChanged', playbackRate: rate });
       }),
       engine.addListener('timeUpdate', ({ currentTime, bufferedPosition }) => {
+        if (Number.isFinite(currentTime)) {
+          latestPositionRef.current = currentTime;
+        }
         setPosition(currentTime);
         notify({
           type: 'progress',
@@ -380,6 +396,7 @@ export function usePurePlayer(
     if (duration === null) return;
     const target = Math.max(0, Math.min(seconds, duration));
     if (target < duration) setEnded(false);
+    latestPositionRef.current = target;
     engine.currentTime = target;
     onEvent?.({ sourceId: source.id, type: 'seekStarted', position: target });
   }

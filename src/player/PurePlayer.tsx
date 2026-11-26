@@ -596,16 +596,20 @@ function PlayerSession({
     };
   }, []);
 
-  // 3. Periodic progress checkpoint every 10s during active playback
+  // 3. Initial save once playback passes 3s, then periodic checkpoint every 10s
+  const passedMinWatchThreshold = player.position >= 3;
   useEffect(() => {
     if (!player.isPlaying) return;
+    if (lastProgressSaveRef.current === 0 && passedMinWatchThreshold) {
+      triggerSaveProgress('periodic');
+    }
     const interval = setInterval(() => {
       if (Date.now() - lastProgressSaveRef.current >= 10000) {
         triggerSaveProgress('periodic');
       }
-    }, 5000);
+    }, 3000);
     return () => clearInterval(interval);
-  }, [player.isPlaying]);
+  }, [player.isPlaying, passedMinWatchThreshold]);
 
   const handleHardwareBack = useEffectEvent(() => {
     if (showPauseDetails) {
